@@ -1,0 +1,129 @@
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 20px;
+  position: relative;
+  overflow: hidden;
+}
+
+.login-page::before {
+  content: "";
+  position: absolute;
+  top: -10%; left: -10%; right: -10%; bottom: -10%;
+  background: url('./mountain-bg.png') no-repeat center center / cover;
+  z-index: -1;
+  animation: ambientPan 45s ease-in-out infinite alternate;
+}
+
+@keyframes ambientPan {
+  0% { transform: scale(1) translate(0, 0); }
+  100% { transform: scale(1.1) translate(-2%, 2%); }
+}
+
+.login-box {
+  width: min(100%, 360px);
+  padding: 34px;
+  border-radius: 20px;
+  background: rgba(18, 30, 50, 0.45);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  color: #ffffff;
+  text-align: center;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+  position: relative;
+  z-index: 1;
+}
+
+.login-box h1 {
+  margin: 0 0 10px;
+}
+
+.login-box p {
+  font-size: 14px;
+  opacity: 0.85;
+  margin: 0 0 20px;
+}
+
+.auth-toggle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.login-box .toggle-btn {
+  background: rgba(255, 255, 255, 0.14);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+}
+
+.login-box .toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.login-box .toggle-btn-active {
+  background: #ffcc70;
+  color: #111111;
+  border-color: #ffcc70;
+}
+
+.login-box .toggle-btn-active:hover {
+  background: #ffaa00;
+}
+
+.login-box input {
+  width: 100%;
+  padding: 10px;
+  margin: 10px 0;
+  border-radius: 8px;
+  border: none;
+  outline: none;
+}
+
+.login-box button {
+  width: 100%;
+  padding: 10px;
+  border: none;
+  border-radius: 8px;
+  background: #ffcc70;
+  color: #111111;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.3s ease;
+}
+
+.login-box button:hover {
+  background: #ffaa00;
+}
+
+.login-box button:disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.login-error {
+  margin-top: 10px;
+  color: #ffd6d6;
+  font-size: 12px;
+}
+
+.login-box .guest-btn {
+  margin-top: 10px;
+  background: rgba(255, 255, 255, 0.16);
+  color: #ffffff;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+}
+
+.login-box .guest-btn:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.footer {
+  display: block;
+  margin-top: 15px;
+  font-size: 12px;
+  opacity: 0.72;
+}

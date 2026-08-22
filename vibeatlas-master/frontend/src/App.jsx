@@ -91,8 +91,8 @@ function readUserStorage(key, email, fallback) {
 // to avoid "Unexpected token '<!DOCTYPE'" when backend lands on a sibling port.
 const BACKEND_PORT_CANDIDATES = [3001, 3002, 3003, 3004, 3005, 3006, 3007, 3008, 3009, 3010, 3011];
 const IS_PRODUCTION = process.env.NODE_ENV === 'production';
-let BACKEND_URL = (process.env.REACT_APP_BACKEND_URL || import.meta.env.VITE_API_BASE_URL || 'https://vibeatlas-backend.onrender.com' ||'').replace(/\/$/, '') || 'http://localhost:3001';
-
+// let BACKEND_URL = (process.env.REACT_APP_BACKEND_URL || import.meta.env.VITE_API_BASE_URL || 'https://vibeatlas-backend.onrender.com' ||'').replace(/\/$/, '') || 'http://localhost:3001';
+let BACKEND_URL = 'https://vibeatlas-backend.onrender.com';
 const resolveBackendUrl = async () => {
   if (IS_PRODUCTION && BACKEND_URL) return BACKEND_URL;
   for (const p of BACKEND_PORT_CANDIDATES) {

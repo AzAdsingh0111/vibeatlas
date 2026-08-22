@@ -5,6 +5,9 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
+    "lint": "node --check server.js && node --check migrate.js && node --check migrate-local-store.js",
+    "test": "node --test",
+    "migrate": "node migrate.js",
     "migrate:local-store": "node migrate-local-store.js"
   },
   "dependencies": {

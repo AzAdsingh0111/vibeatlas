@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { Pool } = require('pg');
+const { runMigrations } = require('./migrate');
 require('dotenv').config();
 
 const databaseUrl = String(process.env.DATABASE_URL || '').trim();
@@ -8,32 +9,15 @@ if (!databaseUrl) throw new Error('DATABASE_URL is required.');
 
 const storePath = path.join(__dirname, 'local-store.json');
 const store = JSON.parse(fs.readFileSync(storePath, 'utf8'));
-const pool = new Pool({ connectionString: databaseUrl });
+const pool = new Pool({
+  connectionString: databaseUrl,
+  max: Number(process.env.DATABASE_POOL_MAX || 10),
+  connectionTimeoutMillis: Number(process.env.DATABASE_CONNECTION_TIMEOUT_MS || 5000),
+  ssl: process.env.DATABASE_SSL === 'true' ? { rejectUnauthorized: process.env.DATABASE_SSL_REJECT_UNAUTHORIZED !== 'false' } : undefined
+});
 
 async function migrate() {
-  await pool.query('CREATE EXTENSION IF NOT EXISTS postgis');
-  await pool.query("DO $$ BEGIN CREATE TYPE vibe_mood AS ENUM ('Calm', 'Musical', 'Excited', 'Reflective', 'Melancholy'); EXCEPTION WHEN duplicate_object THEN null; END $$");
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS users (
-      id BIGSERIAL PRIMARY KEY, email TEXT UNIQUE NOT NULL, password_hash TEXT NOT NULL,
-      name TEXT, role TEXT NOT NULL DEFAULT 'Explorer', created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-    CREATE TABLE IF NOT EXISTS vibes (
-      id BIGSERIAL PRIMARY KEY, lat DOUBLE PRECISION NOT NULL, lon DOUBLE PRECISION NOT NULL,
-      mood vibe_mood NOT NULL, note TEXT, song TEXT, spotify_track_id TEXT,
-      spotify_playlist_id TEXT, weather TEXT, time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      geom GEOGRAPHY(POINT, 4326), name TEXT, mood_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
-      budget TEXT NOT NULL DEFAULT 'medium', ratings JSONB NOT NULL DEFAULT '{}'::jsonb,
-      reviews JSONB NOT NULL DEFAULT '[]'::jsonb, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      user_id BIGINT REFERENCES users(id) ON DELETE CASCADE
-    );
-    CREATE TABLE IF NOT EXISTS route_feedback (
-      id BIGSERIAL PRIMARY KEY, route_id TEXT NOT NULL, before_mood TEXT NOT NULL,
-      after_mood TEXT NOT NULL, improvement_score DOUBLE PRECISION NOT NULL,
-      feedback_rating DOUBLE PRECISION, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      user_id BIGINT REFERENCES users(id) ON DELETE CASCADE
-    );
-  `);
+  await runMigrations(pool);
 
   const client = await pool.connect();
   const userIds = new Map();

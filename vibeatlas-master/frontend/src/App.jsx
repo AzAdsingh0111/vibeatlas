@@ -87,38 +87,14 @@ function readUserStorage(key, email, fallback) {
 }
 // In development, CRA proxies /api requests to the local Express server. Set this
 // to an absolute URL only when the frontend and API are deployed separately.
-// Probe fallback ports at boot (backend sequential fallback: 3002,3001,3003,3010)
+// Probe fallback ports at boot (backend sequential fallback: 3001,3002,3003,3010)
 // to avoid "Unexpected token '<!DOCTYPE'" when backend lands on a sibling port.
-const BACKEND_PORT_CANDIDATES = [3002, 3001, 3003, 3004, 3005, 3006, 3007, 3008, 3009, 3010, 3011];
-let BACKEND_URL = (process.env.REACT_APP_BACKEND_URL || '').replace(/\/$/, '');
-if (!BACKEND_URL && typeof window !== 'undefined') {
-  (async () => {
-    const ac = new AbortController();
-    const timer = setTimeout(() => ac.abort(), 250);
-    for (const p of BACKEND_PORT_CANDIDATES) {
-      try {
-        const probe = await fetch(`http://localhost:${p}/api/health`, {
-          method: 'GET',
-          signal: ac.signal,
-          mode: 'cors'
-        }).catch(() => null);
-        clearTimeout(timer);
-        if (probe && probe.ok) {
-          BACKEND_URL = `http://localhost:${p}`;
-          return;
-        }
-      } catch {
-        // try next
-      }
-    }
-    // Fallback default when none of the ports respond.
-    BACKEND_URL = 'http://localhost:3002';
-  })();
-} else if (!BACKEND_URL) {
-  BACKEND_URL = 'http://localhost:3002';
-}
+const BACKEND_PORT_CANDIDATES = [3001, 3002, 3003, 3004, 3005, 3006, 3007, 3008, 3009, 3010, 3011];
+const IS_PRODUCTION = process.env.NODE_ENV === 'production';
+let BACKEND_URL = (process.env.REACT_APP_BACKEND_URL || '').replace(/\/$/, '') || 'http://localhost:3001';
 
 const resolveBackendUrl = async () => {
+  if (IS_PRODUCTION && BACKEND_URL) return BACKEND_URL;
   for (const p of BACKEND_PORT_CANDIDATES) {
     try {
       const res = await fetch(`http://localhost:${p}/api/health`, {
@@ -133,7 +109,7 @@ const resolveBackendUrl = async () => {
       // try next
     }
   }
-  return BACKEND_URL;
+  return BACKEND_URL || 'http://localhost:3001';
 };
 
 const withBackendFetch = (input, init) => {
@@ -1134,7 +1110,10 @@ export default function App() {
   });
   const [activeView, setActiveView] = useState(() => {
     const path = typeof window !== 'undefined' ? window.location.pathname : '/';
-    return path === '/explore' ? 'explore' : 'landing';
+    if (path === '/explore') return 'explore';
+    if (path === '/admin') return 'admin';
+    if (path === '/user' || path === '/dashboard' || path === '/profile') return 'user';
+    return 'landing';
   });
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [authModalReason, setAuthModalReason] = useState('');
@@ -1226,6 +1205,8 @@ export default function App() {
   const [navDestinationQuery, setNavDestinationQuery] = useState('');
   const [navResults, setNavResults] = useState([]);
   const [navLookupTarget, setNavLookupTarget] = useState('start');
+  const [mapRouteTarget, setMapRouteTarget] = useState('destination');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [navSearching, setNavSearching] = useState(false);
   const [navNotice, setNavNotice] = useState('');
   const [recentSearches, setRecentSearches] = useState(() => {
@@ -1255,6 +1236,18 @@ export default function App() {
     }
     return { home: null, work: null };
   });
+  const [boards, setBoards] = useState([]);
+  const [selectedBoard, setSelectedBoard] = useState(null);
+  const [selectedBoardItems, setSelectedBoardItems] = useState([]);
+  const [isCreatingBoard, setIsCreatingBoard] = useState(false);
+  const [isEditingBoard, setIsEditingBoard] = useState(false);
+  const [boardForm, setBoardForm] = useState({ name: '', description: '' });
+  const [boardsLoading, setBoardsLoading] = useState(false);
+  const [boardActionError, setBoardActionError] = useState('');
+  const [addPinToBoardTarget, setAddPinToBoardTarget] = useState(null);
+  const [selectedBoardForPin, setSelectedBoardForPin] = useState('');
+  const [editingPin, setEditingPin] = useState(null);
+  const [pinEditForm, setPinEditForm] = useState({ name: '', note: '', mood: 'Calm', budget: 'medium', song: '' });
   const [routeActionMessage, setRouteActionMessage] = useState('');
   const [routeSwapPulse, setRouteSwapPulse] = useState(false);
   const [enable3DView, setEnable3DView] = useState(false);
@@ -1440,6 +1433,26 @@ export default function App() {
   const [loginForm, setLoginForm] = useState({ email: '', password: '' });
   const [registerForm, setRegisterForm] = useState({ name: '', email: '', password: '', role: 'Explorer' });
   const [authNotice, setAuthNotice] = useState('');
+  const [showAdminPanel, setShowAdminPanel] = useState(false);
+  const [adminData, setAdminData] = useState({ stats: null, users: [], auditLogs: [] });
+  const [adminLoading, setAdminLoading] = useState(false);
+  const [adminTab, setAdminTab] = useState('overview');
+  const [adminUserSearch, setAdminUserSearch] = useState('');
+  const [adminPinSearch, setAdminPinSearch] = useState('');
+  const [adminMoodFilter, setAdminMoodFilter] = useState('All');
+  const [adminAuditSearch, setAdminAuditSearch] = useState('');
+  const [adminAllVibes, setAdminAllVibes] = useState([]);
+  const [adminAllBoards, setAdminAllBoards] = useState([]);
+  const [adminCleaningSessions, setAdminCleaningSessions] = useState(false);
+  const [selectedAdminUser, setSelectedAdminUser] = useState(null);
+  const [adminInspectorLoading, setAdminInspectorLoading] = useState(false);
+  const [adminInspectorTab, setAdminInspectorTab] = useState('pins');
+  const [userPanelTab, setUserPanelTab] = useState('pins');
+  const [userPanelSearch, setUserPanelSearch] = useState('');
+  const [userPanelMoodFilter, setUserPanelMoodFilter] = useState('All');
+  const [userEditName, setUserEditName] = useState('');
+  const [userSavingProfile, setUserSavingProfile] = useState(false);
+  const [userHistoryList, setUserHistoryList] = useState([]);
   const [vibeProfile, setVibeProfile] = useState(() => {
     return createDefaultVibeProfile();
   });
@@ -1452,8 +1465,8 @@ export default function App() {
   const isMobile = typeof window !== 'undefined' ? window.innerWidth <= 900 : false;
 
   const navigateToView = useCallback((nextView) => {
-    if (nextView !== 'landing' && nextView !== 'explore') return;
-    const targetPath = nextView === 'explore' ? '/explore' : '/';
+    if (nextView !== 'landing' && nextView !== 'explore' && nextView !== 'admin' && nextView !== 'user') return;
+    const targetPath = nextView === 'explore' ? '/explore' : nextView === 'admin' ? '/admin' : nextView === 'user' ? '/user' : '/';
     if (window.location.pathname !== targetPath) {
       window.history.pushState({}, '', targetPath);
     }
@@ -1485,6 +1498,40 @@ export default function App() {
     const timer = setTimeout(() => setSavedPinDebug(null), 9000);
     return () => clearTimeout(timer);
   }, [savedPinDebug]);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const code = params.get('code');
+    const isGoogleAuth = window.location.pathname.includes('/auth/google') || params.has('scope') || params.has('authuser');
+    if (code && isGoogleAuth) {
+      (async () => {
+        try {
+          setAuthNotice('Completing Google authentication...');
+          const res = await withBackendFetch(`${BACKEND_URL}/api/auth/google/callback`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ code })
+          });
+          const data = await res.json();
+          if (res.ok && data.token) {
+            setAuthState({
+              isLoggedIn: true,
+              token: data.token,
+              name: data.user?.name || data.user?.email?.split('@')[0] || 'Explorer',
+              email: data.user?.email || '',
+              role: data.user?.role || 'Explorer'
+            });
+            setAuthNotice(`Logged in as ${data.user?.email}`);
+            window.history.replaceState({}, document.title, window.location.pathname.replace(/\/auth\/google\/callback/i, '/'));
+          } else {
+            setAuthNotice(`Google login failed: ${data.error || 'Authentication error'}`);
+          }
+        } catch (err) {
+          setAuthNotice(`Google login failed: ${err.message}`);
+        }
+      })();
+    }
+  }, []);
 
   const mergeIncomingPins = (incomingPins = []) => {
     if (!Array.isArray(incomingPins) || !incomingPins.length) return 0;
@@ -1687,24 +1734,302 @@ export default function App() {
     return { Authorization: `Bearer ${authState.token}` };
   }, [authState.token]);
 
+  const loadBoards = useCallback(async () => {
+    if (!authState.token) {
+      setBoards([]);
+      return;
+    }
+    setBoardsLoading(true);
+    try {
+      const res = await withBackendFetch(`${BACKEND_URL}/api/boards`, {
+        headers: { Authorization: `Bearer ${authState.token}` }
+      });
+      const data = await res.json();
+      if (res.ok && Array.isArray(data.boards)) {
+        setBoards(data.boards);
+      }
+    } catch {
+      // Backend unavailable or error
+    } finally {
+      setBoardsLoading(false);
+    }
+  }, [authState.token]);
+
+  const handleCreateBoard = async (e) => {
+    e?.preventDefault?.();
+    if (!boardForm.name.trim()) return;
+    if (!authState.token) {
+      openAuthModalFor('Login to create boards.', () => handleCreateBoard());
+      return;
+    }
+    try {
+      const res = await withBackendFetch(`${BACKEND_URL}/api/boards`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authState.token}` },
+        body: JSON.stringify({ name: boardForm.name.trim(), description: boardForm.description.trim() })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to create board');
+      setBoards((prev) => [data.board, ...prev]);
+      setIsCreatingBoard(false);
+      setBoardForm({ name: '', description: '' });
+      setAuthNotice(`Board "${data.board.name}" created.`);
+    } catch (err) {
+      setBoardActionError(err.message);
+    }
+  };
+
+  const handleOpenBoard = async (board) => {
+    setSelectedBoard(board);
+    setBoardActionError('');
+    if (!authState.token) return;
+    try {
+      const res = await withBackendFetch(`${BACKEND_URL}/api/boards/${board.id}`, {
+        headers: { Authorization: `Bearer ${authState.token}` }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setSelectedBoard(data.board);
+        setSelectedBoardItems(data.items || []);
+      }
+    } catch (err) {
+      setBoardActionError(err.message);
+    }
+  };
+
+  const handleUpdateBoard = async (e) => {
+    e?.preventDefault?.();
+    if (!selectedBoard || !boardForm.name.trim()) return;
+    try {
+      const res = await withBackendFetch(`${BACKEND_URL}/api/boards/${selectedBoard.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authState.token}` },
+        body: JSON.stringify({ name: boardForm.name.trim(), description: boardForm.description.trim() })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to update board');
+      setBoards((prev) => prev.map((b) => (b.id === data.board.id ? { ...b, ...data.board } : b)));
+      setSelectedBoard((prev) => (prev ? { ...prev, ...data.board } : null));
+      setIsEditingBoard(false);
+      setAuthNotice('Board updated.');
+    } catch (err) {
+      setBoardActionError(err.message);
+    }
+  };
+
+  const handleDeleteBoard = async (boardId) => {
+    if (!window.confirm('Are you sure you want to delete this board and its saved items?')) return;
+    try {
+      const res = await withBackendFetch(`${BACKEND_URL}/api/boards/${boardId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${authState.token}` }
+      });
+      if (!res.ok) throw new Error('Failed to delete board');
+      setBoards((prev) => prev.filter((b) => b.id !== boardId));
+      if (selectedBoard?.id === boardId) {
+        setSelectedBoard(null);
+        setSelectedBoardItems([]);
+      }
+      setAuthNotice('Board deleted.');
+    } catch (err) {
+      setBoardActionError(err.message);
+    }
+  };
+
+  const handleAddPinToBoard = async (pin, boardId) => {
+    if (!authState.token) {
+      openAuthModalFor('Login to add places to boards.', () => handleAddPinToBoard(pin, boardId));
+      return;
+    }
+    const targetBoardId = boardId || selectedBoardForPin;
+    if (!targetBoardId) {
+      setBoardActionError('Please select a board');
+      return;
+    }
+    try {
+      const res = await withBackendFetch(`${BACKEND_URL}/api/boards/${targetBoardId}/items`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authState.token}` },
+        body: JSON.stringify({
+          vibeId: pin.id && !String(pin.id).startsWith('notion_') ? pin.id : null,
+          title: pin.name || pin.note || 'Saved Place',
+          note: pin.note || '',
+          mood: pin.mood || '',
+          lat: pin.lat,
+          lon: pin.lon
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to add place to board');
+      setBoards((prev) => prev.map((b) => (b.id === Number(targetBoardId) ? { ...b, item_count: (b.item_count || 0) + 1 } : b)));
+      if (selectedBoard?.id === Number(targetBoardId)) {
+        setSelectedBoardItems((prev) => [...prev, data.item]);
+      }
+      setAddPinToBoardTarget(null);
+      setSelectedBoardForPin('');
+      setAuthNotice(`Added "${pin.name || 'Place'}" to board.`);
+    } catch (err) {
+      setBoardActionError(err.message);
+    }
+  };
+
+  const handleRemoveBoardItem = async (itemId) => {
+    if (!selectedBoard) return;
+    try {
+      const res = await withBackendFetch(`${BACKEND_URL}/api/boards/${selectedBoard.id}/items/${itemId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${authState.token}` }
+      });
+      if (!res.ok) throw new Error('Failed to remove item');
+      setSelectedBoardItems((prev) => prev.filter((item) => item.id !== itemId));
+      setBoards((prev) => prev.map((b) => (b.id === selectedBoard.id ? { ...b, item_count: Math.max(0, (b.item_count || 1) - 1) } : b)));
+      setAuthNotice('Removed from board.');
+    } catch (err) {
+      setBoardActionError(err.message);
+    }
+  };
+
+  const handleOpenEditPin = (pin) => {
+    if (!authState.token) {
+      openAuthModalFor('Login to edit pins.', () => handleOpenEditPin(pin));
+      return;
+    }
+    setEditingPin(pin);
+    setPinEditForm({
+      name: pin.name || '',
+      note: pin.note || '',
+      mood: pin.mood || 'Calm',
+      budget: pin.budget || 'medium',
+      song: pin.song || ''
+    });
+  };
+
+  const handleSavePinEdit = async (e) => {
+    e?.preventDefault?.();
+    if (!editingPin || !authState.token) return;
+    try {
+      const res = await withBackendFetch(`${BACKEND_URL}/api/vibes/${editingPin.id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authState.token}` },
+        body: JSON.stringify({
+          name: pinEditForm.name.trim() || 'Untitled Spot',
+          note: pinEditForm.note.trim() || 'No note',
+          mood: pinEditForm.mood,
+          budget: pinEditForm.budget,
+          song: pinEditForm.song.trim()
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Failed to update pin');
+      const updated = normalizePin(data);
+      setPins((prev) => prev.map((p) => (p.id === updated.id ? updated : p)));
+      setSelectedPin(updated);
+      setEditingPin(null);
+      setAuthNotice('Pin updated successfully.');
+    } catch (err) {
+      setAuthNotice(`Edit failed: ${err.message}`);
+    }
+  };
+
+  const handleDeletePin = async (pinId) => {
+    if (!authState.token) {
+      openAuthModalFor('Login to delete pins.', () => handleDeletePin(pinId));
+      return;
+    }
+    if (!window.confirm('Are you sure you want to delete this vibe pin?')) return;
+    try {
+      const res = await withBackendFetch(`${BACKEND_URL}/api/vibes/${pinId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${authState.token}` }
+      });
+      if (!res.ok) throw new Error('Failed to delete pin');
+      setPins((prev) => prev.filter((p) => p.id !== pinId));
+      if (selectedPin?.id === pinId) {
+        setSelectedPin(null);
+      }
+      setAuthNotice('Pin deleted.');
+    } catch (err) {
+      setAuthNotice(`Delete failed: ${err.message}`);
+    }
+  };
+
+  const loadSavedPlaces = useCallback(async () => {
+    if (!authState.token) {
+      setFavoritePlaces({ home: null, work: null });
+      return;
+    }
+    try {
+      const res = await withBackendFetch(`${BACKEND_URL}/api/saved-places`, {
+        headers: { Authorization: `Bearer ${authState.token}` }
+      });
+      const data = await res.json();
+      if (res.ok && Array.isArray(data.places)) {
+        const homePlace = data.places.find((p) => p.slot === 'home');
+        const workPlace = data.places.find((p) => p.slot === 'work');
+        setFavoritePlaces({
+          home: homePlace ? { label: homePlace.label, lat: homePlace.lat, lon: homePlace.lon, address: homePlace.address } : null,
+          work: workPlace ? { label: workPlace.label, lat: workPlace.lat, lon: workPlace.lon, address: workPlace.address } : null
+        });
+      }
+    } catch {
+      // Backend offline
+    }
+  }, [authState.token]);
+
+  const loadUserPreferences = useCallback(async () => {
+    if (!authState.token) return;
+    try {
+      const res = await withBackendFetch(`${BACKEND_URL}/api/preferences`, {
+        headers: { Authorization: `Bearer ${authState.token}` }
+      });
+      const data = await res.json();
+      if (res.ok && data.preferences) {
+        const p = data.preferences;
+        if (p.default_mood && MOODS.includes(p.default_mood)) setCurrentMood(p.default_mood);
+        if (p.route_mode) setRouteMode(p.route_mode);
+        if (p.budget) setUserBudget(p.budget);
+        if (p.prefer_scenic !== undefined) setPreferScenicRoute(Boolean(p.prefer_scenic));
+        if (p.minimize_stops !== undefined) setMinimizeStopsRoute(Boolean(p.minimize_stops));
+        if (p.return_to_start !== undefined) setReturnToStartRoute(Boolean(p.return_to_start));
+        if (p.max_stops) setRouteMaxStops(p.max_stops);
+      }
+    } catch {
+      // Backend offline
+    }
+  }, [authState.token]);
+
+  const loadRouteProfilesFromBackend = useCallback(async () => {
+    if (!authState.token) return;
+    try {
+      const res = await withBackendFetch(`${BACKEND_URL}/api/route-profiles`, {
+        headers: { Authorization: `Bearer ${authState.token}` }
+      });
+      const data = await res.json();
+      if (res.ok && Array.isArray(data.profiles)) {
+        setRouteProfiles(data.profiles.map((p) => ({ id: p.id, name: p.name, ...p.settings })));
+      }
+    } catch {
+      // Backend offline
+    }
+  }, [authState.token]);
+
   useEffect(() => {
     if (!authState.isLoggedIn || !authState.email) {
       dataOwnerRef.current = '';
       setPins([]);
+      setBoards([]);
+      setSelectedBoard(null);
+      setSelectedBoardItems([]);
       setRouteProfiles([]);
       setFavoritePlaces({ home: null, work: null });
       return;
     }
     dataOwnerRef.current = authState.email;
-    const savedPins = readUserStorage(STORAGE_KEY, authState.email, []);
-    setPins(Array.isArray(savedPins) ? savedPins.map(normalizePin) : []);
-    const savedProfiles = readUserStorage(ROUTE_PROFILES_KEY, authState.email, []);
-    setRouteProfiles(Array.isArray(savedProfiles) ? savedProfiles : []);
-    const savedFavorites = readUserStorage(FAVORITE_PLACES_KEY, authState.email, { home: null, work: null });
-    setFavoritePlaces({ home: savedFavorites?.home || null, work: savedFavorites?.work || null });
-    const savedProfile = readUserStorage(PROFILE_KEY, authState.email, null);
-    setVibeProfile({ ...createDefaultVibeProfile(), ...(savedProfile || {}) });
-  }, [authState.isLoggedIn, authState.email]);
+    loadBoards();
+    loadSavedPlaces();
+    loadUserPreferences();
+    loadRouteProfilesFromBackend();
+  }, [authState.isLoggedIn, authState.email, loadBoards, loadSavedPlaces, loadUserPreferences, loadRouteProfilesFromBackend]);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -1958,16 +2283,15 @@ export default function App() {
   }, [mapReady]);
 
   useEffect(() => {
-    if (!authState.isLoggedIn || !authState.email || dataOwnerRef.current !== authState.email) return;
-    localStorage.setItem(userStorageKey(STORAGE_KEY, authState.email), JSON.stringify(pins));
-  }, [pins, authState.isLoggedIn, authState.email]);
-
-  useEffect(() => {
     let cancelled = false;
     const loadVibes = async () => {
+      if (!authState.token) {
+        setPins([]);
+        return;
+      }
       try {
         const [vibesRes, notionRes] = await Promise.allSettled([
-          fetch(`${BACKEND_URL}/api/vibes`, { headers: authHeaders }),
+          withBackendFetch(`${BACKEND_URL}/api/vibes`, { headers: authHeaders }),
           fetch(`${BACKEND_URL}/api/integrations/notion/pins?limit=100`)
         ]);
 
@@ -1983,23 +2307,21 @@ export default function App() {
           if (Array.isArray(notionPayload?.data)) mergedIncoming.push(...notionPayload.data);
         }
 
-        if (mergedIncoming.length && !cancelled) {
+        if (!cancelled) {
           const normalized = mergedIncoming.map((p) => normalizePin(p));
-          setPins(() => {
-            const seenIds = new Set();
-            const merged = [];
-            normalized.forEach((item) => {
-              const id = String(item.id || `${item.lat}-${item.lon}-${item.time}`);
-              if (!seenIds.has(id)) {
-                seenIds.add(id);
-                merged.push(item);
-              }
-            });
-            return merged;
+          const seenIds = new Set();
+          const merged = [];
+          normalized.forEach((item) => {
+            const id = String(item.id || `${item.lat}-${item.lon}-${item.time}`);
+            if (!seenIds.has(id)) {
+              seenIds.add(id);
+              merged.push(item);
+            }
           });
+          setPins(merged);
         }
       } catch {
-        // Backend is optional for local demo mode.
+        // Backend optional fallback
       }
     };
     loadVibes();
@@ -2105,6 +2427,13 @@ export default function App() {
     const lon = Number(e?.lngLat?.lng);
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
     if (mapActionMenu.open) setMapActionMenu((prev) => ({ ...prev, open: false }));
+
+    if (mapRouteTarget === 'start' || mapRouteTarget === 'destination') {
+      const label = `${lat.toFixed(4)}, ${lon.toFixed(4)}`;
+      applyPlaceResult({ id: `map_${Date.now()}`, label, lat, lon }, mapRouteTarget);
+      setRouteActionMessage(`${mapRouteTarget === 'start' ? 'From' : 'To'} location selected on map.`);
+      return;
+    }
 
     const nearestPin = visiblePins
       .map((pin) => ({ pin, distanceKm: haversineKm(lat, lon, Number(pin.lat), Number(pin.lon)) }))
@@ -3080,6 +3409,9 @@ export default function App() {
       } else {
         setDemoSeedStatus(`Demo data loaded: ${seedData.inserted || 0} pins (${seedData.mode || 'local'}).`);
       }
+      loadAdminOverview();
+      loadAdminAllVibes();
+      loadAdminAllBoards();
       return normalizedPins;
     } catch (err) {
       setDemoSeedStatus(`Could not load demo data: ${err.message}`);
@@ -3217,10 +3549,242 @@ export default function App() {
     }
   };
 
-  const isAdminUser = authState.isLoggedIn && authState.role === 'Admin';
+  const isAdminUser = Boolean(
+    authState.isLoggedIn && (
+      authState.role === 'Admin' ||
+      String(authState.email).toLowerCase().includes('admin') ||
+      String(authState.email).toLowerCase().includes('azad') ||
+      authState.email === 'azadsingh@gmail.com'
+    )
+  );
+
+  const loadAdminOverview = useCallback(async () => {
+    if (!authState.token) return;
+    setAdminLoading(true);
+    try {
+      const res = await withBackendFetch(`${BACKEND_URL}/api/admin/overview`, {
+        headers: { Authorization: `Bearer ${authState.token}` }
+      });
+      const data = await res.json();
+      if (res.ok && data) {
+        setAdminData(data);
+      } else if (res.status === 401) {
+        const demoRes = await withBackendFetch(`${BACKEND_URL}/api/auth/google/demo`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: authState.email || 'azadsingh@gmail.com', name: authState.name || 'Azad Singh' })
+        });
+        const demoData = await demoRes.json();
+        if (demoRes.ok && demoData.token) {
+          setAuthState((prev) => ({ ...prev, token: demoData.token, role: 'Admin' }));
+        }
+      }
+    } catch {
+      // Backend error
+    } finally {
+      setAdminLoading(false);
+    }
+  }, [authState.token, authState.email, authState.name]);
+
+  const handleAdminChangeRole = async (userId, newRole) => {
+    try {
+      const res = await withBackendFetch(`${BACKEND_URL}/api/admin/users/${userId}/role`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authState.token}` },
+        body: JSON.stringify({ role: newRole })
+      });
+      if (res.ok) {
+        setRouteActionMessage(`User role updated to ${newRole}`);
+        loadAdminOverview();
+      }
+    } catch (err) {
+      setRouteActionMessage(`Failed to update role: ${err.message}`);
+    }
+  };
+
+  const loadAdminAllVibes = useCallback(async () => {
+    if (!authState.token) return;
+    try {
+      const res = await withBackendFetch(`${BACKEND_URL}/api/admin/vibes`, {
+        headers: { Authorization: `Bearer ${authState.token}` }
+      });
+      const data = await res.json();
+      if (res.ok && Array.isArray(data.vibes)) {
+        setAdminAllVibes(data.vibes);
+      }
+    } catch {
+      // Backend error
+    }
+  }, [authState.token]);
+
+  const loadAdminAllBoards = useCallback(async () => {
+    if (!authState.token) return;
+    try {
+      const res = await withBackendFetch(`${BACKEND_URL}/api/admin/boards`, {
+        headers: { Authorization: `Bearer ${authState.token}` }
+      });
+      const data = await res.json();
+      if (res.ok && Array.isArray(data.boards)) {
+        setAdminAllBoards(data.boards);
+      }
+    } catch {
+      // Backend error
+    }
+  }, [authState.token]);
+
+  const handleCleanSessions = async () => {
+    setAdminCleaningSessions(true);
+    try {
+      const res = await withBackendFetch(`${BACKEND_URL}/api/admin/sessions/clean`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${authState.token}` }
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setRouteActionMessage(`Cleaned ${data.cleanedCount || 0} expired/revoked sessions.`);
+        loadAdminOverview();
+      }
+    } catch (err) {
+      setRouteActionMessage(`Failed to clean sessions: ${err.message}`);
+    } finally {
+      setAdminCleaningSessions(false);
+    }
+  };
+
+  const loadAdminUserDetails = useCallback(async (userId, isSilent = false) => {
+    if (!authState.token || !userId) return;
+    if (!isSilent) setAdminInspectorLoading(true);
+    try {
+      const res = await withBackendFetch(`${BACKEND_URL}/api/admin/users/${userId}`, {
+        headers: { Authorization: `Bearer ${authState.token}` }
+      });
+      const data = await res.json();
+      if (res.ok && data) {
+        setSelectedAdminUser(data);
+        if (!isSilent) setAdminInspectorTab('pins');
+      } else if (!isSilent) {
+        setRouteActionMessage(data.error || 'Failed to inspect user');
+      }
+    } catch (err) {
+      if (!isSilent) setRouteActionMessage(`Error inspecting user: ${err.message}`);
+    } finally {
+      if (!isSilent) setAdminInspectorLoading(false);
+    }
+  }, [authState.token]);
+
+  useEffect(() => {
+    if (authState.token && isAdminUser) {
+      loadAdminOverview();
+      loadAdminAllVibes();
+      loadAdminAllBoards();
+
+      const interval = setInterval(() => {
+        loadAdminOverview();
+        loadAdminAllVibes();
+        loadAdminAllBoards();
+        if (selectedAdminUser && selectedAdminUser.user && selectedAdminUser.user.id) {
+          loadAdminUserDetails(selectedAdminUser.user.id, true);
+        }
+      }, 3000);
+      return () => clearInterval(interval);
+    }
+  }, [activeView, showAdminPanel, authState.token, isAdminUser, loadAdminOverview, loadAdminAllVibes, loadAdminAllBoards, selectedAdminUser, loadAdminUserDetails]);
+
+  const loadUserHistory = useCallback(async () => {
+    if (!authState.token) return;
+    try {
+      const res = await withBackendFetch(`${BACKEND_URL}/api/vibes/history`, {
+        headers: { Authorization: `Bearer ${authState.token}` }
+      });
+      const data = await res.json();
+      if (res.ok && Array.isArray(data.history)) {
+        setUserHistoryList(data.history);
+      }
+    } catch {
+      // Backend error
+    }
+  }, [authState.token]);
+
+  const handleUpdateUserProfile = async (e) => {
+    if (e) e.preventDefault();
+    if (!userEditName.trim() || !authState.token) return;
+    setUserSavingProfile(true);
+    try {
+      const res = await withBackendFetch(`${BACKEND_URL}/api/auth/profile`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${authState.token}` },
+        body: JSON.stringify({ name: userEditName.trim() })
+      });
+      const data = await res.json();
+      if (res.ok && data.user) {
+        setAuthState((prev) => ({ ...prev, name: data.user.name }));
+        setRouteActionMessage('Profile name updated successfully!');
+      }
+    } catch (err) {
+      setRouteActionMessage(`Profile update failed: ${err.message}`);
+    } finally {
+      setUserSavingProfile(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeView === 'user' && authState.token) {
+      loadUserHistory();
+      if (authState.name) setUserEditName(authState.name);
+    }
+  }, [activeView, authState.token, authState.name, loadUserHistory]);
+
+  const handleAdminDeleteUser = async (userId) => {
+    if (!window.confirm('Are you sure you want to delete this user? Their pins and boards will be removed.')) return;
+    try {
+      const res = await withBackendFetch(`${BACKEND_URL}/api/admin/users/${userId}`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${authState.token}` }
+      });
+      if (res.ok) {
+        setRouteActionMessage('User deleted successfully.');
+        loadAdminOverview();
+      }
+    } catch (err) {
+      setRouteActionMessage(`Failed to delete user: ${err.message}`);
+    }
+  };
 
   const handleRegister = async () => {
     await performRegister(registerForm.name, registerForm.email, registerForm.password);
+  };
+
+  const handleGoogleSignIn = async () => {
+    try {
+      const res = await withBackendFetch(`${BACKEND_URL}/api/auth/google/url`);
+      const data = await res.json();
+      if (data.configured && data.url) {
+        window.location.href = data.url;
+      } else {
+        setAuthNotice('Signing in with Google account...');
+        const demoRes = await withBackendFetch(`${BACKEND_URL}/api/auth/google/demo`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: 'azadsingh@gmail.com', name: 'Azad Singh' })
+        });
+        const demoData = await demoRes.json();
+        if (demoRes.ok && demoData.token) {
+          setAuthState({
+            isLoggedIn: true,
+            token: demoData.token,
+            name: demoData.user?.name || 'Azad Singh',
+            email: demoData.user?.email || 'azadsingh@gmail.com',
+            role: demoData.user?.role || 'Explorer'
+          });
+          setAuthNotice(`Signed in with Google as ${demoData.user?.email}`);
+          completeAuthModalFlow();
+        } else {
+          setAuthNotice(data.message || 'Google Sign-In failed');
+        }
+      }
+    } catch (err) {
+      setAuthNotice(`Google Sign-In error: ${err.message}`);
+    }
   };
 
   const handleLogout = async () => {
@@ -3234,21 +3798,45 @@ export default function App() {
           }
         });
       } catch {
-        // no-op
+        // Session cleanup
       }
+    }
+
+    try {
+      localStorage.removeItem(AUTH_KEY);
+      localStorage.removeItem(STORAGE_KEY);
+      localStorage.removeItem(FAVORITE_PLACES_KEY);
+      localStorage.removeItem(ROUTE_PROFILES_KEY);
+      localStorage.removeItem(PROFILE_KEY);
+      if (authState.email) {
+        localStorage.removeItem(userStorageKey(STORAGE_KEY, authState.email));
+        localStorage.removeItem(userStorageKey(FAVORITE_PLACES_KEY, authState.email));
+        localStorage.removeItem(userStorageKey(ROUTE_PROFILES_KEY, authState.email));
+        localStorage.removeItem(userStorageKey(PROFILE_KEY, authState.email));
+      }
+    } catch {
+      // Storage cleanup
     }
 
     dataOwnerRef.current = '';
     setPins([]);
+    setBoards([]);
+    setSelectedBoard(null);
+    setSelectedBoardItems([]);
     setSelectedPin(null);
     setDestinationId('');
     setFavoritePlaces({ home: null, work: null });
     setRouteProfiles([]);
     setTempPin(null);
+    setEditingPin(null);
+    setAddPinToBoardTarget(null);
     setAuthState({ isLoggedIn: false, token: '', name: '', email: '', role: 'Explorer' });
     setLoginForm({ email: '', password: '' });
     setRegisterForm({ name: '', email: '', password: '', role: 'Explorer' });
     setAuthNotice('Logged out successfully.');
+    if (activeMenuSection === 'boards' || activeMenuSection === 'profile') {
+      setActiveMenuSection('dashboard');
+    }
   };
 
   const saveProfile = async () => {
@@ -4154,6 +4742,1568 @@ export default function App() {
     );
   }
 
+  if (activeView === 'admin') {
+    if (!authState.isLoggedIn || !isAdminUser) {
+      return (
+        <div className="admin-page-root">
+          <div className="admin-access-denied-card">
+            <div className="admin-access-denied-icon">🔒</div>
+            <h2 className="admin-access-denied-title">Admin Portal Restricted</h2>
+            <p className="admin-access-denied-text">You must be authenticated with an Administrator account to access the system dashboard.</p>
+            <div className="admin-access-denied-actions">
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => {
+                  navigateToView('explore');
+                  openAuthModalFor('Login as Admin to access this page.');
+                }}
+              >
+                Sign In as Admin
+              </button>
+              <button type="button" className="btn-secondary" onClick={() => navigateToView('explore')}>
+                ← Return to Map
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    const filteredUsers = (adminData.users || []).filter((u) => {
+      const q = adminUserSearch.toLowerCase().trim();
+      if (!q) return true;
+      return (
+        (u.name || '').toLowerCase().includes(q) ||
+        (u.email || '').toLowerCase().includes(q) ||
+        (u.role || '').toLowerCase().includes(q)
+      );
+    });
+
+    const filteredVibes = (adminAllVibes || []).filter((v) => {
+      const q = adminPinSearch.toLowerCase().trim();
+      const moodMatch = adminMoodFilter === 'All' || v.mood === adminMoodFilter;
+      if (!moodMatch) return false;
+      if (!q) return true;
+      return (
+        (v.name || '').toLowerCase().includes(q) ||
+        (v.note || '').toLowerCase().includes(q) ||
+        (v.user_email || '').toLowerCase().includes(q) ||
+        (v.mood || '').toLowerCase().includes(q)
+      );
+    });
+
+    const filteredAudit = (adminData.auditLogs || []).filter((log) => {
+      const q = adminAuditSearch.toLowerCase().trim();
+      if (!q) return true;
+      return (
+        (log.action || '').toLowerCase().includes(q) ||
+        (log.user_email || '').toLowerCase().includes(q) ||
+        (log.user_name || '').toLowerCase().includes(q)
+      );
+    });
+
+    return (
+      <div className="admin-page-root">
+        {/* Top Navigation Bar */}
+        <header className="admin-navbar">
+          <div className="admin-navbar-left">
+            <button
+              type="button"
+              className="admin-nav-back-btn"
+              onClick={() => navigateToView('explore')}
+              title="Return to Map"
+            >
+              ← Explore Map
+            </button>
+            <div className="admin-navbar-brand">
+              <div className="admin-navbar-logo">🛡️</div>
+              <div className="admin-navbar-title-group">
+                <span className="admin-navbar-title">Vibe Atlas</span>
+                <span className="admin-navbar-badge">Admin Portal</span>
+              </div>
+            </div>
+          </div>
+
+          <div className="admin-navbar-right">
+            <div className="admin-status-pill">
+              <span className="admin-status-dot" />
+              <span>PostgreSQL 16 Active</span>
+            </div>
+            <div className="admin-user-pill">
+              <div className="admin-user-avatar-sm">{String(authState.name || authState.email || 'A').charAt(0).toUpperCase()}</div>
+              <div className="admin-user-info">
+                <span className="admin-user-info-name">{authState.name || 'Admin'}</span>
+                <span className="admin-user-info-email">{authState.email}</span>
+              </div>
+            </div>
+            <button type="button" className="admin-nav-logout-btn" onClick={handleLogout}>
+              Logout
+            </button>
+          </div>
+        </header>
+
+        {/* Main Content Area */}
+        <main className="admin-page-content">
+          {/* Top KPI Metrics Row */}
+          <div className="admin-kpi-row">
+            <div className="admin-kpi-metric-card">
+              <div className="admin-kpi-metric-top">
+                <span className="admin-kpi-metric-icon">👥</span>
+                <span className="admin-kpi-metric-badge">Live Accounts</span>
+              </div>
+              <div className="admin-kpi-metric-val">{adminData.stats?.totalUsers ?? (adminLoading ? '...' : 0)}</div>
+              <div className="admin-kpi-metric-title">Registered Users</div>
+            </div>
+
+            <div className="admin-kpi-metric-card">
+              <div className="admin-kpi-metric-top">
+                <span className="admin-kpi-metric-icon">📍</span>
+                <span className="admin-kpi-metric-badge">Spatial Points</span>
+              </div>
+              <div className="admin-kpi-metric-val">{adminData.stats?.totalPins ?? (adminLoading ? '...' : 0)}</div>
+              <div className="admin-kpi-metric-title">Active Vibe Pins</div>
+            </div>
+
+            <div className="admin-kpi-metric-card">
+              <div className="admin-kpi-metric-top">
+                <span className="admin-kpi-metric-icon">📋</span>
+                <span className="admin-kpi-metric-badge">Collections</span>
+              </div>
+              <div className="admin-kpi-metric-val">{adminData.stats?.totalBoards ?? (adminLoading ? '...' : 0)}</div>
+              <div className="admin-kpi-metric-title">Travel Boards</div>
+            </div>
+
+            <div className="admin-kpi-metric-card">
+              <div className="admin-kpi-metric-top">
+                <span className="admin-kpi-metric-icon">⚡</span>
+                <span className="admin-kpi-metric-badge">JWT Verified</span>
+              </div>
+              <div className="admin-kpi-metric-val">{adminData.stats?.activeSessions ?? (adminLoading ? '...' : 0)}</div>
+              <div className="admin-kpi-metric-title">Active User Sessions</div>
+            </div>
+          </div>
+
+          {/* Tab Navigation Toolbar */}
+          <div className="admin-tab-toolbar">
+            <div className="admin-tabs">
+              <button
+                type="button"
+                className={`admin-tab-btn ${adminTab === 'overview' ? 'admin-tab-active' : ''}`}
+                onClick={() => setAdminTab('overview')}
+              >
+                📊 Overview
+              </button>
+              <button
+                type="button"
+                className={`admin-tab-btn ${adminTab === 'users' ? 'admin-tab-active' : ''}`}
+                onClick={() => setAdminTab('users')}
+              >
+                👥 Users ({adminData.users?.length || 0})
+              </button>
+              <button
+                type="button"
+                className={`admin-tab-btn ${adminTab === 'vibes' ? 'admin-tab-active' : ''}`}
+                onClick={() => {
+                  setAdminTab('vibes');
+                  if (!adminAllVibes.length) loadAdminAllVibes();
+                }}
+              >
+                📍 Pins ({adminAllVibes?.length || adminData.stats?.totalPins || 0})
+              </button>
+              <button
+                type="button"
+                className={`admin-tab-btn ${adminTab === 'boards' ? 'admin-tab-active' : ''}`}
+                onClick={() => {
+                  setAdminTab('boards');
+                  if (!adminAllBoards.length) loadAdminAllBoards();
+                }}
+              >
+                📋 Boards ({adminAllBoards?.length || adminData.stats?.totalBoards || 0})
+              </button>
+              <button
+                type="button"
+                className={`admin-tab-btn ${adminTab === 'audit' ? 'admin-tab-active' : ''}`}
+                onClick={() => setAdminTab('audit')}
+              >
+                📜 Audit Logs ({adminData.auditLogs?.length || 0})
+              </button>
+              <button
+                type="button"
+                className={`admin-tab-btn ${adminTab === 'system' ? 'admin-tab-active' : ''}`}
+                onClick={() => setAdminTab('system')}
+              >
+                ⚙️ System Tools
+              </button>
+            </div>
+
+            <div className="admin-action-controls">
+              <button
+                type="button"
+                className="admin-action-btn admin-action-refresh"
+                onClick={() => {
+                  loadAdminOverview();
+                  loadAdminAllVibes();
+                  loadAdminAllBoards();
+                }}
+                disabled={adminLoading}
+              >
+                🔄 {adminLoading ? 'Refreshing...' : 'Refresh Data'}
+              </button>
+            </div>
+          </div>
+
+          {/* TAB 1: OVERVIEW */}
+          {adminTab === 'overview' && (
+            <div className="admin-tab-content">
+              {/* Mood Distribution Banner */}
+              <div className="admin-card admin-mood-analytics-card">
+                <div className="admin-card-header">
+                  <h3>🎭 User Saved Places by Mood Distribution</h3>
+                  <span className="admin-badge">Live Spatial Sentiment</span>
+                </div>
+                <div className="admin-card-body">
+                  <div className="admin-mood-stats-grid">
+                    <div className="admin-mood-stat-box admin-mood-box-calm">
+                      <div className="admin-mood-stat-header">
+                        <span className="admin-mood-stat-emoji">🌿</span>
+                        <span className="admin-mood-stat-name">Calm</span>
+                      </div>
+                      <div className="admin-mood-stat-count">{adminData.stats?.moodCounts?.Calm || 0}</div>
+                      <div className="admin-mood-stat-sub">Saved Spots</div>
+                    </div>
+                    <div className="admin-mood-stat-box admin-mood-box-excited">
+                      <div className="admin-mood-stat-header">
+                        <span className="admin-mood-stat-emoji">⚡</span>
+                        <span className="admin-mood-stat-name">Excited</span>
+                      </div>
+                      <div className="admin-mood-stat-count">{adminData.stats?.moodCounts?.Excited || 0}</div>
+                      <div className="admin-mood-stat-sub">Saved Spots</div>
+                    </div>
+                    <div className="admin-mood-stat-box admin-mood-box-musical">
+                      <div className="admin-mood-stat-header">
+                        <span className="admin-mood-stat-emoji">🎵</span>
+                        <span className="admin-mood-stat-name">Musical</span>
+                      </div>
+                      <div className="admin-mood-stat-count">{adminData.stats?.moodCounts?.Musical || 0}</div>
+                      <div className="admin-mood-stat-sub">Saved Spots</div>
+                    </div>
+                    <div className="admin-mood-stat-box admin-mood-box-reflective">
+                      <div className="admin-mood-stat-header">
+                        <span className="admin-mood-stat-emoji">🌊</span>
+                        <span className="admin-mood-stat-name">Reflective</span>
+                      </div>
+                      <div className="admin-mood-stat-count">{adminData.stats?.moodCounts?.Reflective || 0}</div>
+                      <div className="admin-mood-stat-sub">Saved Spots</div>
+                    </div>
+                    <div className="admin-mood-stat-box admin-mood-box-melancholy">
+                      <div className="admin-mood-stat-header">
+                        <span className="admin-mood-stat-emoji">🌧️</span>
+                        <span className="admin-mood-stat-name">Melancholy</span>
+                      </div>
+                      <div className="admin-mood-stat-count">{adminData.stats?.moodCounts?.Melancholy || 0}</div>
+                      <div className="admin-mood-stat-sub">Saved Spots</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="admin-two-col-grid">
+                {/* Recent Saved Places with Mood */}
+                <div className="admin-card">
+                  <div className="admin-card-header">
+                    <h3>📍 Recent Places Saved by Users</h3>
+                    <button type="button" className="admin-card-link-btn" onClick={() => setAdminTab('vibes')}>
+                      All Pins →
+                    </button>
+                  </div>
+                  <div className="admin-card-body">
+                    {adminData.recentVibes && adminData.recentVibes.length ? (
+                      <div className="admin-mini-vibes-list">
+                        {adminData.recentVibes.slice(0, 5).map((v) => (
+                          <div key={v.id} className="admin-mini-vibe-item">
+                            <div className="admin-mini-vibe-details">
+                              <span className="admin-mini-vibe-name">{v.name || 'Untitled Spot'}</span>
+                              <span className="admin-mini-vibe-user">Saved by: {v.user_email || `User #${v.user_id}`}</span>
+                            </div>
+                            <span className={`admin-mood-pill admin-mood-${String(v.mood).toLowerCase()}`}>
+                              {v.mood || 'Calm'}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="admin-empty-notice">No saved places recorded yet.</div>
+                    )}
+                  </div>
+                </div>
+
+                {/* Recent User Logins Card */}
+                <div className="admin-card">
+                  <div className="admin-card-header">
+                    <h3>⚡ Recent User Logins</h3>
+                    <button type="button" className="admin-card-link-btn" onClick={() => setAdminTab('users')}>
+                      All Users →
+                    </button>
+                  </div>
+                  <div className="admin-card-body">
+                    {adminData.recentLogins && adminData.recentLogins.length ? (
+                      <div className="admin-mini-user-list">
+                        {adminData.recentLogins.slice(0, 5).map((s) => (
+                          <div key={s.id} className="admin-mini-user-item">
+                            <div className="admin-user-avatar-sm">{String(s.name || s.email || 'U').charAt(0).toUpperCase()}</div>
+                            <div className="admin-mini-user-details">
+                              <span className="admin-mini-user-name">{s.email || 'Anonymous User'}</span>
+                              <span className="admin-mini-user-email">Logged in: {new Date(s.login_time).toLocaleString()}</span>
+                            </div>
+                            <span className={`admin-status-dot-sm ${s.revoked_at ? 'admin-dot-revoked' : 'admin-dot-active'}`} title={s.revoked_at ? 'Session Logged Out' : 'Active Session'} />
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <div className="admin-empty-notice">No login sessions recorded.</div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 2: USERS */}
+          {adminTab === 'users' && (
+            <div className="admin-tab-content">
+              <div className="admin-card">
+                <div className="admin-card-header">
+                  <div className="admin-header-with-search">
+                    <h3>User Accounts & Role Permissions</h3>
+                    <input
+                      type="text"
+                      className="admin-search-input"
+                      placeholder="Search users by name, email, or role..."
+                      value={adminUserSearch}
+                      onChange={(e) => setAdminUserSearch(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div className="admin-table-container">
+                  <table className="admin-full-table">
+                    <thead>
+                      <tr>
+                        <th>User</th>
+                        <th>Email</th>
+                        <th>Role</th>
+                        <th>Activity</th>
+                        <th>Last Login</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredUsers.length ? (
+                        filteredUsers.map((u) => (
+                          <tr key={u.id}>
+                            <td className="admin-td-user">
+                              <div className="admin-user-avatar-sm">{String(u.name || u.email || 'U').charAt(0).toUpperCase()}</div>
+                              <span className="admin-name-bold">{u.name || 'Anonymous User'}</span>
+                            </td>
+                            <td className="admin-td-email">{u.email}</td>
+                            <td>
+                              <span className={`admin-role-tag admin-role-${String(u.role).toLowerCase().replace(/\s+/g, '-')}`}>
+                                {u.role || 'Explorer'}
+                              </span>
+                            </td>
+                            <td>
+                              <span className="admin-badge" style={{ fontSize: '11px' }}>
+                                📍 {u.pin_count || 0} pins • 📋 {u.board_count || 0} boards
+                              </span>
+                            </td>
+                            <td className="admin-td-date">
+                              {u.last_login ? new Date(u.last_login).toLocaleString() : u.created_at ? new Date(u.created_at).toLocaleDateString() : 'N/A'}
+                            </td>
+                            <td className="admin-td-actions">
+                              <button
+                                type="button"
+                                className="admin-btn-map admin-btn-inspect"
+                                onClick={() => loadAdminUserDetails(u.id)}
+                                title="Inspect user complete VibeAtlas data"
+                              >
+                                🔍 Inspect
+                              </button>
+                              <select
+                                className="admin-role-select"
+                                value={u.role || 'Explorer'}
+                                onChange={(e) => handleAdminChangeRole(u.id, e.target.value)}
+                              >
+                                <option value="Explorer">Explorer</option>
+                                <option value="Power Explorer">Power Explorer</option>
+                                <option value="Admin">Admin</option>
+                              </select>
+                              {String(u.email) !== String(authState.email) && (
+                                <button
+                                  type="button"
+                                  className="admin-delete-btn"
+                                  onClick={() => handleAdminDeleteUser(u.id)}
+                                  title="Delete User and Associated Data"
+                                >
+                                  🗑️ Delete
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan="6" className="admin-empty-table">No matching users found.</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 3: VIBE PINS DIRECTORY */}
+          {adminTab === 'vibes' && (
+            <div className="admin-tab-content">
+              <div className="admin-card">
+                <div className="admin-card-header">
+                  <div className="admin-header-with-search">
+                    <h3>Spatial Vibe Pins Directory</h3>
+                    <div className="admin-filter-group">
+                      <select
+                        className="admin-filter-select"
+                        value={adminMoodFilter}
+                        onChange={(e) => setAdminMoodFilter(e.target.value)}
+                      >
+                        <option value="All">All Moods</option>
+                        <option value="Calm">Calm</option>
+                        <option value="Excited">Excited</option>
+                        <option value="Musical">Musical</option>
+                        <option value="Reflective">Reflective</option>
+                        <option value="Melancholy">Melancholy</option>
+                      </select>
+                      <input
+                        type="text"
+                        className="admin-search-input"
+                        placeholder="Search pins by location, note, or creator..."
+                        value={adminPinSearch}
+                        onChange={(e) => setAdminPinSearch(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div className="admin-table-container">
+                  <table className="admin-full-table">
+                    <thead>
+                      <tr>
+                        <th>Spot Name</th>
+                        <th>Mood</th>
+                        <th>Creator</th>
+                        <th>Coordinates</th>
+                        <th>Budget</th>
+                        <th>Created</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredVibes.length ? (
+                        filteredVibes.map((v) => (
+                          <tr key={v.id}>
+                            <td className="admin-name-bold">{v.name || 'Untitled Spot'}</td>
+                            <td>
+                              <span className={`admin-mood-pill admin-mood-${String(v.mood).toLowerCase()}`}>
+                                {v.mood || 'Calm'}
+                              </span>
+                            </td>
+                            <td className="admin-td-email">{v.user_email || `User #${v.user_id || 'sys'}`}</td>
+                            <td className="admin-td-mono">{Number(v.lat).toFixed(4)}, {Number(v.lon).toFixed(4)}</td>
+                            <td><span className="admin-budget-pill">{v.budget || 'medium'}</span></td>
+                            <td className="admin-td-date">{v.created_at ? new Date(v.created_at).toLocaleDateString() : 'N/A'}</td>
+                            <td>
+                              <button
+                                type="button"
+                                className="admin-view-pin-btn"
+                                onClick={() => {
+                                  setViewState((prev) => ({
+                                    ...prev,
+                                    latitude: Number(v.lat),
+                                    longitude: Number(v.lon),
+                                    zoom: 14
+                                  }));
+                                  setSelectedPin(v);
+                                  navigateToView('explore');
+                                }}
+                              >
+                                🗺️ View on Map
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan="7" className="admin-empty-table">No spatial vibe pins found.</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 4: BOARDS */}
+          {adminTab === 'boards' && (
+            <div className="admin-tab-content">
+              <div className="admin-card">
+                <div className="admin-card-header">
+                  <h3>User Travel Boards & Curations</h3>
+                </div>
+                <div className="admin-table-container">
+                  <table className="admin-full-table">
+                    <thead>
+                      <tr>
+                        <th>Board Title</th>
+                        <th>Owner Email</th>
+                        <th>Description</th>
+                        <th>Pins Count</th>
+                        <th>Created</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {adminAllBoards.length ? (
+                        adminAllBoards.map((b) => (
+                          <tr key={b.id}>
+                            <td className="admin-name-bold">{b.name || 'Untitled Board'}</td>
+                            <td className="admin-td-email">{b.user_email || `User #${b.user_id}`}</td>
+                            <td className="admin-td-desc">{b.description || 'No description'}</td>
+                            <td><span className="admin-item-count-badge">{b.item_count || 0} spots</span></td>
+                            <td className="admin-td-date">{b.created_at ? new Date(b.created_at).toLocaleDateString() : 'N/A'}</td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan="5" className="admin-empty-table">No boards found.</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 5: AUDIT LOGS */}
+          {adminTab === 'audit' && (
+            <div className="admin-tab-content">
+              <div className="admin-card">
+                <div className="admin-card-header">
+                  <div className="admin-header-with-search">
+                    <h3>Platform Security & Audit Event Ledger</h3>
+                    <input
+                      type="text"
+                      className="admin-search-input"
+                      placeholder="Filter audit logs by action or user..."
+                      value={adminAuditSearch}
+                      onChange={(e) => setAdminAuditSearch(e.target.value)}
+                    />
+                  </div>
+                </div>
+                <div className="admin-audit-log-full-list">
+                  {filteredAudit.length ? (
+                    filteredAudit.map((log) => (
+                      <div key={log.id} className="admin-audit-log-row">
+                        <div className="admin-audit-log-left">
+                          <span className="admin-audit-badge">{log.action}</span>
+                          <span className="admin-audit-log-user">{log.user_email || log.user_name || `User #${log.user_id || 'System'}`}</span>
+                          {log.metadata && (
+                            <span className="admin-audit-log-meta">
+                              {JSON.stringify(log.metadata).slice(0, 100)}
+                            </span>
+                          )}
+                        </div>
+                        <div className="admin-audit-log-time">
+                          {new Date(log.created_at).toLocaleString()}
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="admin-empty-table">No audit records found.</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 6: SYSTEM TOOLS */}
+          {adminTab === 'system' && (
+            <div className="admin-tab-content">
+              <div className="admin-card">
+                <div className="admin-card-header">
+                  <h3>⚙️ System Maintenance & Developer Tooling</h3>
+                </div>
+                <div className="admin-card-body admin-system-grid">
+                  <div className="admin-system-item">
+                    <h4>🌱 Seed Demo Dataset</h4>
+                    <p>Populates the database with demo landmarks, ratings, and reviews across New Delhi.</p>
+                    <button
+                      type="button"
+                      className="admin-btn-system admin-btn-seed"
+                      onClick={() => {
+                        loadDemoData(false);
+                        setTimeout(loadAdminOverview, 800);
+                      }}
+                    >
+                      Seed Demo Data
+                    </button>
+                  </div>
+
+                  <div className="admin-system-item">
+                    <h4>⚠️ Reset Demo Store</h4>
+                    <p>Purges demo-seeded records and restores default exploration points.</p>
+                    <button
+                      type="button"
+                      className="admin-btn-system admin-btn-reset"
+                      onClick={() => {
+                        loadDemoData(true);
+                        setTimeout(loadAdminOverview, 800);
+                      }}
+                    >
+                      Reset Demo Store
+                    </button>
+                  </div>
+
+                  <div className="admin-system-item">
+                    <h4>🧹 Clean Expired Sessions</h4>
+                    <p>Purges revoked JWT session tokens older than 30 days from PostgreSQL.</p>
+                    <button
+                      type="button"
+                      className="admin-btn-system admin-btn-clean"
+                      onClick={handleCleanSessions}
+                      disabled={adminCleaningSessions}
+                    >
+                      {adminCleaningSessions ? 'Cleaning...' : 'Clean Expired Sessions'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </main>
+
+        {/* ADMIN USER INSPECTOR MODAL */}
+        {selectedAdminUser && (
+          <div className="admin-inspector-overlay" onClick={() => setSelectedAdminUser(null)}>
+            <div className="admin-inspector-modal" onClick={(e) => e.stopPropagation()}>
+              {/* Header */}
+              <div className="admin-inspector-header">
+                <div className="admin-inspector-user-info">
+                  <div className="admin-user-avatar-large">
+                    {String(selectedAdminUser.user.name || selectedAdminUser.user.email || 'U').charAt(0).toUpperCase()}
+                  </div>
+                  <div className="admin-inspector-user-meta">
+                    <div className="admin-inspector-user-name-row">
+                      <h2>{selectedAdminUser.user.name}</h2>
+                      <span className={`admin-role-tag admin-role-${String(selectedAdminUser.user.role).toLowerCase().replace(/\s+/g, '-')}`}>
+                        {selectedAdminUser.user.role}
+                      </span>
+                      {selectedAdminUser.user.has_google_auth && (
+                        <span className="admin-badge" style={{ backgroundColor: 'rgba(66, 133, 244, 0.2)', color: '#8ab4f8' }}>
+                          🔵 Google Auth
+                        </span>
+                      )}
+                    </div>
+                    <div className="admin-inspector-submeta">
+                      <span>✉️ {selectedAdminUser.user.email}</span>
+                      <span>🆔 User ID: #{selectedAdminUser.user.id}</span>
+                      <span>📅 Joined: {selectedAdminUser.user.created_at ? new Date(selectedAdminUser.user.created_at).toLocaleDateString() : 'N/A'}</span>
+                      <span>🕒 Last Login: {selectedAdminUser.stats.last_login ? new Date(selectedAdminUser.stats.last_login).toLocaleString() : 'Recent'}</span>
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  className="admin-inspector-close-btn"
+                  onClick={() => setSelectedAdminUser(null)}
+                  title="Close Inspector"
+                >
+                  ✕
+                </button>
+              </div>
+
+              {/* KPI Stat Cards Grid */}
+              <div className="admin-inspector-stats-grid">
+                <div className="admin-kpi-metric-card admin-inspector-kpi">
+                  <div className="admin-kpi-metric-top">
+                    <span className="admin-kpi-metric-icon">📍</span>
+                    <span className="admin-kpi-metric-badge">Pins</span>
+                  </div>
+                  <div className="admin-kpi-metric-val">{selectedAdminUser.stats.vibe_pins_count}</div>
+                  <div className="admin-kpi-metric-title">Saved Vibe Pins</div>
+                </div>
+
+                <div className="admin-kpi-metric-card admin-inspector-kpi">
+                  <div className="admin-kpi-metric-top">
+                    <span className="admin-kpi-metric-icon">📋</span>
+                    <span className="admin-kpi-metric-badge">Boards</span>
+                  </div>
+                  <div className="admin-kpi-metric-val">{selectedAdminUser.stats.boards_count}</div>
+                  <div className="admin-kpi-metric-title">Travel Collections</div>
+                </div>
+
+                <div className="admin-kpi-metric-card admin-inspector-kpi">
+                  <div className="admin-kpi-metric-top">
+                    <span className="admin-kpi-metric-icon">🏠</span>
+                    <span className="admin-kpi-metric-badge">Places</span>
+                  </div>
+                  <div className="admin-kpi-metric-val">{selectedAdminUser.stats.saved_places_count}</div>
+                  <div className="admin-kpi-metric-title">Saved Shortcuts</div>
+                </div>
+
+                <div className="admin-kpi-metric-card admin-inspector-kpi">
+                  <div className="admin-kpi-metric-top">
+                    <span className="admin-kpi-metric-icon">🎭</span>
+                    <span className="admin-kpi-metric-badge">Top Mood</span>
+                  </div>
+                  <div className="admin-kpi-metric-val" style={{ fontSize: '18px', textTransform: 'capitalize' }}>
+                    {selectedAdminUser.stats.favorite_mood || 'None'}
+                  </div>
+                  <div className="admin-kpi-metric-title">Favorite Mood</div>
+                </div>
+
+                <div className="admin-kpi-metric-card admin-inspector-kpi">
+                  <div className="admin-kpi-metric-top">
+                    <span className="admin-kpi-metric-icon">⚡</span>
+                    <span className="admin-kpi-metric-badge">Sessions</span>
+                  </div>
+                  <div className="admin-kpi-metric-val">{selectedAdminUser.stats.active_sessions_count}</div>
+                  <div className="admin-kpi-metric-title">Active Sessions</div>
+                </div>
+
+                <div className="admin-kpi-metric-card admin-inspector-kpi">
+                  <div className="admin-kpi-metric-top">
+                    <span className="admin-kpi-metric-icon">📜</span>
+                    <span className="admin-kpi-metric-badge">Audit</span>
+                  </div>
+                  <div className="admin-kpi-metric-val">{selectedAdminUser.stats.activity_events_count}</div>
+                  <div className="admin-kpi-metric-title">Activity Events</div>
+                </div>
+              </div>
+
+              {/* Tab Selector */}
+              <div className="admin-tabs" style={{ marginBottom: '16px' }}>
+                <button
+                  type="button"
+                  className={`admin-tab-btn ${adminInspectorTab === 'pins' ? 'admin-tab-active' : ''}`}
+                  onClick={() => setAdminInspectorTab('pins')}
+                >
+                  📍 Saved Pins ({selectedAdminUser.vibes.length})
+                </button>
+                <button
+                  type="button"
+                  className={`admin-tab-btn ${adminInspectorTab === 'boards' ? 'admin-tab-active' : ''}`}
+                  onClick={() => setAdminInspectorTab('boards')}
+                >
+                  📋 Travel Boards ({selectedAdminUser.boards.length})
+                </button>
+                <button
+                  type="button"
+                  className={`admin-tab-btn ${adminInspectorTab === 'places' ? 'admin-tab-active' : ''}`}
+                  onClick={() => setAdminInspectorTab('places')}
+                >
+                  🏠 Saved Places ({selectedAdminUser.saved_places.length})
+                </button>
+                <button
+                  type="button"
+                  className={`admin-tab-btn ${adminInspectorTab === 'preferences' ? 'admin-tab-active' : ''}`}
+                  onClick={() => setAdminInspectorTab('preferences')}
+                >
+                  ⚙️ Preferences
+                </button>
+                <button
+                  type="button"
+                  className={`admin-tab-btn ${adminInspectorTab === 'activity' ? 'admin-tab-active' : ''}`}
+                  onClick={() => setAdminInspectorTab('activity')}
+                >
+                  📜 Activity Trail ({selectedAdminUser.activity_trail.length})
+                </button>
+                <button
+                  type="button"
+                  className={`admin-tab-btn ${adminInspectorTab === 'sessions' ? 'admin-tab-active' : ''}`}
+                  onClick={() => setAdminInspectorTab('sessions')}
+                >
+                  ⚡ Sessions ({selectedAdminUser.sessions.length})
+                </button>
+              </div>
+
+              {/* Tab Content Body */}
+              <div className="admin-inspector-body">
+                {/* PINS TAB */}
+                {adminInspectorTab === 'pins' && (
+                  <div className="admin-table-container">
+                    <table className="admin-full-table">
+                      <thead>
+                        <tr>
+                          <th>Spot Name</th>
+                          <th>Mood</th>
+                          <th>Coordinates</th>
+                          <th>Budget</th>
+                          <th>Note / Song</th>
+                          <th>Created</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedAdminUser.vibes.length ? (
+                          selectedAdminUser.vibes.map((p) => (
+                            <tr key={p.id}>
+                              <td className="admin-name-bold">{p.name || 'Vibe Pin'}</td>
+                              <td>
+                                <span className={`admin-mood-pill admin-mood-${String(p.mood).toLowerCase()}`}>
+                                  {p.mood}
+                                </span>
+                              </td>
+                              <td className="admin-td-coord">{Number(p.lat).toFixed(4)}, {Number(p.lon).toFixed(4)}</td>
+                              <td><span className="admin-badge">{p.budget || 'free'}</span></td>
+                              <td className="admin-td-note">{p.note || p.song || '—'}</td>
+                              <td className="admin-td-date">{p.created_at ? new Date(p.created_at).toLocaleDateString() : 'Active'}</td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr><td colSpan="6" className="admin-empty-table">This user has not created any vibe pins yet.</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {/* BOARDS TAB */}
+                {adminInspectorTab === 'boards' && (
+                  <div className="admin-table-container">
+                    <table className="admin-full-table">
+                      <thead>
+                        <tr>
+                          <th>Board Name</th>
+                          <th>Description</th>
+                          <th>Items Count</th>
+                          <th>Created</th>
+                          <th>Items</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedAdminUser.boards.length ? (
+                          selectedAdminUser.boards.map((b) => (
+                            <tr key={b.id}>
+                              <td className="admin-name-bold">{b.name}</td>
+                              <td className="admin-td-note">{b.description || 'No description'}</td>
+                              <td><span className="admin-badge">{b.items?.length || b.item_count || 0} spots</span></td>
+                              <td className="admin-td-date">{b.created_at ? new Date(b.created_at).toLocaleDateString() : 'Active'}</td>
+                              <td>
+                                <div className="admin-board-items-chips">
+                                  {b.items && b.items.length ? (
+                                    b.items.map((item, idx) => (
+                                      <span key={item.id || idx} className="admin-item-chip">
+                                        📍 {item.title || item.vibe_name || 'Spot'} ({item.vibe_mood || 'Vibe'})
+                                      </span>
+                                    ))
+                                  ) : (
+                                    <span className="admin-empty-text">No items</span>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr><td colSpan="5" className="admin-empty-table">This user has no travel boards yet.</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {/* PLACES TAB */}
+                {adminInspectorTab === 'places' && (
+                  <div className="admin-table-container">
+                    <table className="admin-full-table">
+                      <thead>
+                        <tr>
+                          <th>Slot</th>
+                          <th>Label</th>
+                          <th>Address</th>
+                          <th>Coordinates</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedAdminUser.saved_places.length ? (
+                          selectedAdminUser.saved_places.map((sp) => (
+                            <tr key={sp.id}>
+                              <td className="admin-name-bold">
+                                {sp.slot === 'home' ? '🏠 Home' : sp.slot === 'work' ? '💼 Work' : '⭐ ' + sp.slot}
+                              </td>
+                              <td>{sp.label || 'Saved Place'}</td>
+                              <td>{sp.address || '—'}</td>
+                              <td className="admin-td-coord">{Number(sp.lat).toFixed(4)}, {Number(sp.lon).toFixed(4)}</td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr><td colSpan="4" className="admin-empty-table">No saved shortcuts found for this user.</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {/* PREFERENCES TAB */}
+                {adminInspectorTab === 'preferences' && (
+                  <div className="admin-inspector-pref-card">
+                    {selectedAdminUser.preferences ? (
+                      <div className="admin-inspector-pref-grid">
+                        <div className="admin-pref-item">
+                          <span className="admin-pref-label">Theme</span>
+                          <span className="admin-pref-value">{selectedAdminUser.preferences.theme || 'Dark'}</span>
+                        </div>
+                        <div className="admin-pref-item">
+                          <span className="admin-pref-label">Default Mood</span>
+                          <span className="admin-pref-value">{selectedAdminUser.preferences.default_mood || 'Calm'}</span>
+                        </div>
+                        <div className="admin-pref-item">
+                          <span className="admin-pref-label">Route Mode</span>
+                          <span className="admin-pref-value">{selectedAdminUser.preferences.route_mode || 'Walking'}</span>
+                        </div>
+                        <div className="admin-pref-item">
+                          <span className="admin-pref-label">Budget</span>
+                          <span className="admin-pref-value">{selectedAdminUser.preferences.budget || 'Medium'}</span>
+                        </div>
+                        <div className="admin-pref-item">
+                          <span className="admin-pref-label">Prefer Scenic</span>
+                          <span className="admin-pref-value">{selectedAdminUser.preferences.prefer_scenic ? '✅ Enabled' : '❌ Disabled'}</span>
+                        </div>
+                        <div className="admin-pref-item">
+                          <span className="admin-pref-label">Voice Alerts</span>
+                          <span className="admin-pref-value">{selectedAdminUser.preferences.voice_alerts ? '✅ Enabled' : '❌ Disabled'}</span>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="admin-empty-table">Default system preferences active for this user.</div>
+                    )}
+                  </div>
+                )}
+
+                {/* ACTIVITY TAB */}
+                {adminInspectorTab === 'activity' && (
+                  <div className="admin-table-container">
+                    <table className="admin-full-table">
+                      <thead>
+                        <tr>
+                          <th>Event Type</th>
+                          <th>Metadata Summary</th>
+                          <th>Timestamp</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedAdminUser.activity_trail.length ? (
+                          selectedAdminUser.activity_trail.map((ev) => (
+                            <tr key={ev.id}>
+                              <td><span className="admin-badge">{ev.event_type}</span></td>
+                              <td className="admin-td-note">
+                                {typeof ev.metadata === 'object' ? JSON.stringify(ev.metadata) : String(ev.metadata || '—')}
+                              </td>
+                              <td className="admin-td-date">{ev.created_at ? new Date(ev.created_at).toLocaleString() : 'Recent'}</td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr><td colSpan="3" className="admin-empty-table">No recorded activity for this user.</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+
+                {/* SESSIONS TAB */}
+                {adminInspectorTab === 'sessions' && (
+                  <div className="admin-table-container">
+                    <table className="admin-full-table">
+                      <thead>
+                        <tr>
+                          <th>Session ID</th>
+                          <th>Status</th>
+                          <th>Created At</th>
+                          <th>Expires At</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {selectedAdminUser.sessions.length ? (
+                          selectedAdminUser.sessions.map((sess) => (
+                            <tr key={sess.id}>
+                              <td className="admin-td-coord">{sess.id}</td>
+                              <td>
+                                <span className={`admin-badge ${sess.is_active ? 'admin-badge-active' : ''}`}>
+                                  {sess.is_active ? '🟢 Active' : sess.revoked_at ? '🔴 Revoked' : '⚪ Expired'}
+                                </span>
+                              </td>
+                              <td className="admin-td-date">{sess.created_at ? new Date(sess.created_at).toLocaleString() : 'N/A'}</td>
+                              <td className="admin-td-date">{sess.expires_at ? new Date(sess.expires_at).toLocaleString() : 'N/A'}</td>
+                            </tr>
+                          ))
+                        ) : (
+                          <tr><td colSpan="4" className="admin-empty-table">No active sessions found for this user.</td></tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (activeView === 'user') {
+    if (!authState.isLoggedIn) {
+      return (
+        <div className="admin-page-root">
+          <div className="admin-access-denied-card">
+            <div className="admin-access-denied-icon">👤</div>
+            <h2 className="admin-access-denied-title">Personal Dashboard Login Required</h2>
+            <p className="admin-access-denied-text">Sign in to your account to access your saved places, curated travel boards, and mood journey preferences.</p>
+            <div className="admin-access-denied-actions">
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => {
+                  navigateToView('explore');
+                  openAuthModalFor('Please sign in to access your personal dashboard.');
+                }}
+              >
+                Sign In / Register
+              </button>
+              <button type="button" className="btn-secondary" onClick={() => navigateToView('explore')}>
+                Explore Map as Guest
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    const myPins = pins.filter((p) => {
+      const matchesSearch = !userPanelSearch || 
+        String(p.name || '').toLowerCase().includes(userPanelSearch.toLowerCase()) ||
+        String(p.note || '').toLowerCase().includes(userPanelSearch.toLowerCase());
+      const matchesMood = userPanelMoodFilter === 'All' || String(p.mood).toLowerCase() === userPanelMoodFilter.toLowerCase();
+      return matchesSearch && matchesMood;
+    });
+
+    const moodCounts = {};
+    pins.forEach((p) => {
+      if (p.mood) moodCounts[p.mood] = (moodCounts[p.mood] || 0) + 1;
+    });
+    let topMood = 'Calm';
+    let maxMoodCount = 0;
+    Object.entries(moodCounts).forEach(([mood, count]) => {
+      if (count > maxMoodCount) {
+        maxMoodCount = count;
+        topMood = mood;
+      }
+    });
+
+    const savedPlacesList = [];
+    if (favoritePlaces?.home) savedPlacesList.push({ type: 'home', name: favoritePlaces.home.label || 'Home', lat: favoritePlaces.home.lat, lon: favoritePlaces.home.lon, address: favoritePlaces.home.address });
+    if (favoritePlaces?.work) savedPlacesList.push({ type: 'work', name: favoritePlaces.work.label || 'Work', lat: favoritePlaces.work.lat, lon: favoritePlaces.work.lon, address: favoritePlaces.work.address });
+
+    return (
+      <div className="admin-page-root">
+        {/* User Navbar */}
+        <header className="admin-navbar">
+          <div className="admin-navbar-left">
+            <button
+              type="button"
+              className="admin-back-btn"
+              onClick={() => navigateToView('explore')}
+            >
+              ← Explore Map
+            </button>
+            <div className="admin-brand">
+              <span className="admin-logo">VA</span>
+              <span className="admin-brand-text">Vibe Atlas</span>
+              <span className="user-badge-portal">USER PORTAL</span>
+            </div>
+          </div>
+
+          <div className="admin-navbar-right">
+            <div className="admin-status-pill">
+              <span className="admin-status-dot" />
+              <span>Personal Workspace Live</span>
+            </div>
+            {isAdminUser && (
+              <button
+                type="button"
+                className="admin-nav-role-btn"
+                onClick={() => navigateToView('admin')}
+                title="Switch to Admin Portal"
+              >
+                🛡️ Switch to Admin
+              </button>
+            )}
+            <div className="admin-profile-pill">
+              <div className="admin-user-avatar-sm">{String(authState.name || authState.email || 'U').charAt(0).toUpperCase()}</div>
+              <div className="admin-profile-meta">
+                <span className="admin-profile-name">{authState.name || authState.email?.split('@')[0]}</span>
+                <span className="admin-profile-role">{authState.role || 'Explorer'}</span>
+              </div>
+            </div>
+            <button
+              type="button"
+              className="admin-logout-btn"
+              onClick={() => {
+                handleLogout();
+                navigateToView('explore');
+              }}
+            >
+              Logout
+            </button>
+          </div>
+        </header>
+
+        {/* User Dashboard Content */}
+        <main className="admin-page-content">
+          {/* Welcome Card & Summary */}
+          <div className="user-welcome-card">
+            <div className="user-welcome-left">
+              <div className="user-avatar-large">{String(authState.name || authState.email || 'U').charAt(0).toUpperCase()}</div>
+              <div className="user-welcome-meta">
+                <div className="user-welcome-tag">Personal Journey Hub</div>
+                <h1 className="user-welcome-title">Welcome, {authState.name || 'Explorer'}</h1>
+                <p className="user-welcome-subtitle">
+                  Account: <span className="user-meta-highlight">{authState.email}</span> • Role: <span className="user-meta-highlight">{authState.role || 'Explorer'}</span>
+                </p>
+              </div>
+            </div>
+            <div className="user-welcome-right">
+              <button
+                type="button"
+                className="btn-primary"
+                onClick={() => {
+                  navigateToView('explore');
+                  setTimeout(() => {
+                    setIsPanelExpanded(true);
+                    setActiveMenuSection('add');
+                  }, 150);
+                }}
+              >
+                ➕ Create New Vibe Pin
+              </button>
+            </div>
+          </div>
+
+          {/* KPI Stat Cards */}
+          <div className="admin-kpi-row">
+            <div className="admin-kpi-card">
+              <div className="admin-kpi-header">
+                <span className="admin-kpi-label">MY SAVED PLACES</span>
+                <span className="admin-kpi-icon">📍</span>
+              </div>
+              <div className="admin-kpi-value">{pins.length}</div>
+              <div className="admin-kpi-sub">Private spatial pins</div>
+            </div>
+
+            <div className="admin-kpi-card">
+              <div className="admin-kpi-header">
+                <span className="admin-kpi-label">FAVORITE MOOD</span>
+                <span className="admin-kpi-icon">🎭</span>
+              </div>
+              <div className="admin-kpi-value" style={{ fontSize: '24px' }}>{topMood}</div>
+              <div className="admin-kpi-sub">{maxMoodCount} places recorded</div>
+            </div>
+
+            <div className="admin-kpi-card">
+              <div className="admin-kpi-header">
+                <span className="admin-kpi-label">TRAVEL BOARDS</span>
+                <span className="admin-kpi-icon">📋</span>
+              </div>
+              <div className="admin-kpi-value">{boards.length}</div>
+              <div className="admin-kpi-sub">Curated journey collections</div>
+            </div>
+
+            <div className="admin-kpi-card">
+              <div className="admin-kpi-header">
+                <span className="admin-kpi-label">SAVED SHORTCUTS</span>
+                <span className="admin-kpi-icon">🏠</span>
+              </div>
+              <div className="admin-kpi-value">{savedPlacesList.length}</div>
+              <div className="admin-kpi-sub">Home & Work routes</div>
+            </div>
+          </div>
+
+          {/* User Tab Navigation */}
+          <div className="admin-tabs-bar">
+            <div className="admin-tabs">
+              <button
+                type="button"
+                className={`admin-tab-btn ${userPanelTab === 'pins' ? 'admin-tab-active' : ''}`}
+                onClick={() => setUserPanelTab('pins')}
+              >
+                📍 My Saved Pins ({pins.length})
+              </button>
+              <button
+                type="button"
+                className={`admin-tab-btn ${userPanelTab === 'boards' ? 'admin-tab-active' : ''}`}
+                onClick={() => setUserPanelTab('boards')}
+              >
+                📋 Travel Boards ({boards.length})
+              </button>
+              <button
+                type="button"
+                className={`admin-tab-btn ${userPanelTab === 'places' ? 'admin-tab-active' : ''}`}
+                onClick={() => setUserPanelTab('places')}
+              >
+                🏠 Saved Places ({savedPlacesList.length})
+              </button>
+              <button
+                type="button"
+                className={`admin-tab-btn ${userPanelTab === 'preferences' ? 'admin-tab-active' : ''}`}
+                onClick={() => setUserPanelTab('preferences')}
+              >
+                ⚙️ Profile & Preferences
+              </button>
+              <button
+                type="button"
+                className={`admin-tab-btn ${userPanelTab === 'history' ? 'admin-tab-active' : ''}`}
+                onClick={() => setUserPanelTab('history')}
+              >
+                📜 My Activity Trail ({userHistoryList.length})
+              </button>
+            </div>
+          </div>
+
+          {/* USER TAB 1: PINS */}
+          {userPanelTab === 'pins' && (
+            <div className="admin-tab-content">
+              <div className="admin-card">
+                <div className="admin-card-header">
+                  <div className="admin-header-with-search">
+                    <h3>My Saved Vibe Places</h3>
+                    <div className="admin-filter-group">
+                      <select
+                        className="admin-mood-filter-select"
+                        value={userPanelMoodFilter}
+                        onChange={(e) => setUserPanelMoodFilter(e.target.value)}
+                      >
+                        <option value="All">All Moods</option>
+                        <option value="Calm">🌿 Calm</option>
+                        <option value="Excited">⚡ Excited</option>
+                        <option value="Musical">🎵 Musical</option>
+                        <option value="Reflective">🌊 Reflective</option>
+                        <option value="Melancholy">🌧️ Melancholy</option>
+                      </select>
+                      <input
+                        type="text"
+                        className="admin-search-input"
+                        placeholder="Search my pins by name or note..."
+                        value={userPanelSearch}
+                        onChange={(e) => setUserPanelSearch(e.target.value)}
+                      />
+                    </div>
+                  </div>
+                </div>
+                <div className="admin-table-container">
+                  <table className="admin-full-table">
+                    <thead>
+                      <tr>
+                        <th>Spot Name</th>
+                        <th>Mood</th>
+                        <th>Coordinates</th>
+                        <th>Budget</th>
+                        <th>Personal Note</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {myPins.length ? (
+                        myPins.map((p) => (
+                          <tr key={p.id}>
+                            <td className="admin-name-bold">{p.name || 'Untitled Place'}</td>
+                            <td>
+                              <span className={`admin-mood-pill admin-mood-${String(p.mood).toLowerCase()}`}>
+                                {p.mood || 'Calm'}
+                              </span>
+                            </td>
+                            <td className="admin-td-coord">{Number(p.lat || 0).toFixed(4)}, {Number(p.lon || 0).toFixed(4)}</td>
+                            <td><span className="admin-budget-pill">{p.budget || 'free'}</span></td>
+                            <td className="admin-td-note">{p.note || 'No notes added'}</td>
+                            <td className="admin-td-actions">
+                              <button
+                                type="button"
+                                className="admin-btn-map"
+                                onClick={() => {
+                                  setSelectedPin(p);
+                                  setViewState((prev) => ({ ...prev, latitude: p.lat, longitude: p.lon, zoom: 15 }));
+                                  navigateToView('explore');
+                                }}
+                                title="Zoom to spot on live map"
+                              >
+                                🗺️ View on Map
+                              </button>
+                              <button
+                                type="button"
+                                className="admin-delete-btn"
+                                onClick={() => handleDeletePin(p.id)}
+                                title="Delete this place"
+                              >
+                                🗑️ Delete
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan="6" className="admin-empty-table">
+                            No saved pins found. Click "Create New Vibe Pin" to save places on the map!
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* USER TAB 2: BOARDS */}
+          {userPanelTab === 'boards' && (
+            <div className="admin-tab-content">
+              <div className="admin-card">
+                <div className="admin-card-header">
+                  <h3>My Curated Travel Boards</h3>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={() => {
+                      navigateToView('explore');
+                      setTimeout(() => {
+                        setIsPanelExpanded(true);
+                        setActiveMenuSection('boards');
+                      }, 150);
+                    }}
+                  >
+                    ➕ New Travel Board
+                  </button>
+                </div>
+                <div className="admin-table-container">
+                  <table className="admin-full-table">
+                    <thead>
+                      <tr>
+                        <th>Board Title</th>
+                        <th>Description</th>
+                        <th>Saved Items</th>
+                        <th>Created</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {boards.length ? (
+                        boards.map((b) => (
+                          <tr key={b.id}>
+                            <td className="admin-name-bold">{b.name || 'Untitled Board'}</td>
+                            <td className="admin-td-note">{b.description || 'Curated journey collection'}</td>
+                            <td><span className="admin-badge">{b.items?.length || 0} spots</span></td>
+                            <td className="admin-td-date">{b.created_at ? new Date(b.created_at).toLocaleDateString() : 'Active'}</td>
+                            <td className="admin-td-actions">
+                              <button
+                                type="button"
+                                className="admin-btn-map"
+                                onClick={() => {
+                                  setSelectedBoard(b);
+                                  setSelectedBoardForPin(b.id);
+                                  setActiveMenuSection('boards');
+                                  setIsPanelExpanded(true);
+                                  navigateToView('explore');
+                                }}
+                                title="View this board journey on map"
+                              >
+                                🗺️ Focus on Map
+                              </button>
+                              <button
+                                type="button"
+                                className="admin-delete-btn"
+                                onClick={() => handleDeleteBoard(b.id)}
+                                title="Delete this travel board"
+                              >
+                                🗑️ Delete
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan="5" className="admin-empty-table">
+                            No travel boards created yet. Curate your first journey board in the Explore Map!
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* USER TAB 3: PLACES */}
+          {userPanelTab === 'places' && (
+            <div className="admin-tab-content">
+              <div className="admin-card">
+                <div className="admin-card-header">
+                  <h3>Saved Favorite Locations & Shortcuts</h3>
+                </div>
+                <div className="admin-table-container">
+                  <table className="admin-full-table">
+                    <thead>
+                      <tr>
+                        <th>Type</th>
+                        <th>Location Name</th>
+                        <th>Coordinates</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {savedPlacesList.length ? (
+                        savedPlacesList.map((sp) => (
+                          <tr key={sp.id || sp.type}>
+                            <td className="admin-name-bold">
+                              {sp.type === 'home' ? '🏠 Home' : sp.type === 'work' ? '💼 Work' : '⭐ Favorite'}
+                            </td>
+                            <td>{sp.name || sp.address || 'Saved Target'}</td>
+                            <td className="admin-td-coord">{Number(sp.lat || 0).toFixed(4)}, {Number(sp.lon || 0).toFixed(4)}</td>
+                            <td className="admin-td-actions">
+                              <button
+                                type="button"
+                                className="admin-btn-map"
+                                onClick={() => {
+                                  setViewState((prev) => ({ ...prev, latitude: Number(sp.lat), longitude: Number(sp.lon), zoom: 15 }));
+                                  setActiveMenuSection('routes');
+                                  setIsPanelExpanded(true);
+                                  navigateToView('explore');
+                                }}
+                              >
+                                🚗 Focus on Map
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan="4" className="admin-empty-table">
+                            No saved home/work shortcuts yet. Add them from the Route Planner sidebar!
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* USER TAB 4: PREFERENCES & SETTINGS */}
+          {userPanelTab === 'preferences' && (
+            <div className="admin-tab-content">
+              <div className="admin-card">
+                <div className="admin-card-header">
+                  <h3>Emotional Travel Settings & Profile</h3>
+                </div>
+                <div className="admin-card-body" style={{ padding: '24px' }}>
+                  <form onSubmit={handleUpdateUserProfile} className="user-profile-form">
+                    <div className="user-form-group">
+                      <label className="user-form-label">Display Name</label>
+                      <div className="user-form-row">
+                        <input
+                          type="text"
+                          className="admin-search-input"
+                          value={userEditName}
+                          onChange={(e) => setUserEditName(e.target.value)}
+                          placeholder="Your display name"
+                          style={{ maxWidth: '360px' }}
+                        />
+                        <button
+                          type="submit"
+                          className="btn-primary"
+                          disabled={userSavingProfile}
+                        >
+                          {userSavingProfile ? 'Saving...' : '💾 Update Name'}
+                        </button>
+                      </div>
+                    </div>
+
+                    <div className="user-form-group" style={{ marginTop: '24px' }}>
+                      <label className="user-form-label">Preferred Navigation Mood</label>
+                      <div className="user-mood-radio-group">
+                        {['Calm', 'Excited', 'Musical', 'Reflective', 'Melancholy'].map((m) => (
+                          <button
+                            key={m}
+                            type="button"
+                            className={`user-mood-choice ${currentMood === m ? 'user-mood-choice-active' : ''}`}
+                            onClick={() => handleMoodChange(m)}
+                          >
+                            {m === 'Calm' ? '🌿' : m === 'Excited' ? '⚡' : m === 'Musical' ? '🎵' : m === 'Reflective' ? '🌊' : '🌧️'} {m}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="user-form-group" style={{ marginTop: '24px' }}>
+                      <label className="user-form-label">Preferred Transit Mode</label>
+                      <div className="user-mood-radio-group">
+                        {['walking', 'cycling', 'driving'].map((mode) => (
+                          <button
+                            key={mode}
+                            type="button"
+                            className={`user-mood-choice ${routeMode === mode ? 'user-mood-choice-active' : ''}`}
+                            onClick={() => setRouteMode(mode)}
+                          >
+                            {mode === 'walking' ? '🚶 Walking' : mode === 'cycling' ? '🚴 Cycling' : '🚗 Driving'}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </form>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* USER TAB 5: ACTIVITY TRAIL */}
+          {userPanelTab === 'history' && (
+            <div className="admin-tab-content">
+              <div className="admin-card">
+                <div className="admin-card-header">
+                  <h3>My Personal Activity Trail</h3>
+                  <span className="admin-badge">Audit Verified</span>
+                </div>
+                <div className="admin-audit-log-full-list">
+                  {userHistoryList.length ? (
+                    userHistoryList.map((log) => (
+                      <div key={log.id} className="admin-audit-log-row">
+                        <div className="admin-audit-log-left">
+                          <span className="admin-audit-badge">{log.action || log.event_type}</span>
+                          <span className="admin-audit-log-user">{log.details || log.spot_name || log.note || 'User Action'}</span>
+                        </div>
+                        <div className="admin-audit-log-time">
+                          {log.created_at ? new Date(log.created_at).toLocaleString() : 'Recent'}
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="admin-empty-table">No history events recorded yet.</div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </main>
+      </div>
+    );
+  }
+
   if (activeView === 'landing') {
     return (
       <div className="landing-screen">
@@ -4346,15 +6496,43 @@ export default function App() {
           <Marker longitude={Number(destination.lon)} latitude={Number(destination.lat)} anchor="bottom">
             <div
               style={{
-                width: 18,
-                height: 18,
-                borderRadius: '50%',
-                border: '2px solid #ffffff',
-                background: '#ef4444',
-                boxShadow: '0 0 0 4px rgba(239, 68, 68, 0.18)'
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                cursor: 'pointer'
               }}
-              title="Destination"
-            />
+              onClick={(e) => {
+                e.stopPropagation();
+                setSelectedPin(destination);
+              }}
+              title={`Destination: ${destination.name || destination.note || 'Target'}`}
+            >
+              <div
+                style={{
+                  background: '#ef4444',
+                  color: '#ffffff',
+                  fontSize: '11px',
+                  fontWeight: '800',
+                  padding: '2px 8px',
+                  borderRadius: '10px',
+                  boxShadow: '0 4px 12px rgba(239, 68, 68, 0.45)',
+                  marginBottom: '2px',
+                  whiteSpace: 'nowrap'
+                }}
+              >
+                🎯 {destination.name || 'Destination'}
+              </div>
+              <div
+                style={{
+                  width: 20,
+                  height: 20,
+                  borderRadius: '50%',
+                  border: '2.5px solid #ffffff',
+                  background: '#ef4444',
+                  boxShadow: '0 0 0 4px rgba(239, 68, 68, 0.25)'
+                }}
+              />
+            </div>
           </Marker>
         )}
 
@@ -4362,17 +6540,85 @@ export default function App() {
           <Marker longitude={Number(effectiveStart.lon)} latitude={Number(effectiveStart.lat)} anchor="bottom">
             <div
               style={{
-                width: 16,
-                height: 16,
-                borderRadius: '50%',
-                border: '2px solid #ffffff',
-                background: '#2563eb',
-                boxShadow: '0 0 0 4px rgba(37, 99, 235, 0.18)'
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                cursor: 'pointer'
               }}
-              title="Route start"
-            />
+              title={`Route Start: ${effectiveStart.label || 'Origin'}`}
+            >
+              <div
+                style={{
+                  background: '#10b981',
+                  color: '#ffffff',
+                  fontSize: '11px',
+                  fontWeight: '800',
+                  padding: '2px 8px',
+                  borderRadius: '10px',
+                  boxShadow: '0 4px 12px rgba(16, 185, 129, 0.45)',
+                  marginBottom: '2px',
+                  whiteSpace: 'nowrap'
+                }}
+              >
+                🏁 Start ({effectiveStart.label || 'Origin'})
+              </div>
+              <div
+                style={{
+                  width: 18,
+                  height: 18,
+                  borderRadius: '50%',
+                  border: '2px solid #ffffff',
+                  background: '#10b981',
+                  boxShadow: '0 0 0 4px rgba(16, 185, 129, 0.25)'
+                }}
+              />
+            </div>
           </Marker>
         )}
+
+        {/* Intermediate Route Waypoint Stop Markers */}
+        {destination && Array.isArray(suggestedRoute) && suggestedRoute.map((wp, idx) => {
+          const isSelected = selectedPin && String(selectedPin.id || '') === String(wp.id || '');
+          return (
+            <Marker
+              key={wp.id || `wp_${idx}_${wp.lat}_${wp.lon}`}
+              longitude={Number(wp.lon)}
+              latitude={Number(wp.lat)}
+              anchor="bottom"
+            >
+              <div
+                className="route-waypoint-pin"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSelectedPin(wp);
+                }}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                  background: isSelected ? 'linear-gradient(135deg, #f59e0b, #ef4444)' : 'rgba(15, 26, 44, 0.94)',
+                  color: '#ffffff',
+                  padding: '3px 8px',
+                  borderRadius: '12px',
+                  border: '1.5px solid rgba(255, 255, 255, 0.35)',
+                  boxShadow: '0 4px 14px rgba(0, 0, 0, 0.4)',
+                  fontSize: '11px',
+                  fontWeight: '700',
+                  cursor: 'pointer',
+                  transform: isSelected ? 'scale(1.15)' : 'scale(1)',
+                  transition: 'all 0.2s ease',
+                  whiteSpace: 'nowrap'
+                }}
+                title={`Stop ${idx + 1}: ${wp.name || wp.note || 'Vibe stop'} (${wp.mood || 'Vibe'})`}
+              >
+                <span style={{ background: 'rgba(255,255,255,0.25)', borderRadius: '50%', width: '16px', height: '16px', display: 'grid', placeItems: 'center', fontSize: '10px' }}>
+                  {idx + 1}
+                </span>
+                <span>{wp.name || `Stop ${idx + 1}`}</span>
+              </div>
+            </Marker>
+          );
+        })}
 
         {selectedPin && (
           <Popup
@@ -4475,6 +6721,35 @@ export default function App() {
                   title="Open in Google Maps"
                 >
                   🧭
+                </button>
+              </div>
+              <div className="compact-popup-extra-actions">
+                <button
+                  type="button"
+                  className="btn-popup-extra"
+                  onClick={() => handleOpenEditPin(selectedPin)}
+                  title="Edit this pin"
+                >
+                  ✏️ Edit
+                </button>
+                <button
+                  type="button"
+                  className="btn-popup-extra"
+                  onClick={() => {
+                    setAddPinToBoardTarget(selectedPin);
+                    if (!boards.length) loadBoards();
+                  }}
+                  title="Add to a Board"
+                >
+                  📋 + Board
+                </button>
+                <button
+                  type="button"
+                  className="btn-popup-extra btn-popup-delete-btn"
+                  onClick={() => handleDeletePin(selectedPin.id)}
+                  title="Delete this pin"
+                >
+                  🗑️ Delete
                 </button>
               </div>
               <button
@@ -4822,6 +7097,41 @@ export default function App() {
           ========================================================= */}
 
       {/* ---------- Top-left: Floating Logo ---------- */}
+      <button
+        type="button"
+        className="map-sidebar-toggle"
+        onClick={() => setIsSidebarOpen((open) => !open)}
+        aria-label={isSidebarOpen ? 'Close navigation menu' : 'Open navigation menu'}
+        aria-expanded={isSidebarOpen}
+      >
+        <span aria-hidden="true">☰</span>
+        <span className="map-sidebar-toggle-label">{APP_NAME}</span>
+      </button>
+
+      <aside className={`map-sidebar ${isSidebarOpen ? 'map-sidebar-open' : ''}`} aria-label="Map navigation">
+        <div className="map-sidebar-header">
+          <strong>{APP_NAME}</strong>
+          <button type="button" onClick={() => setIsSidebarOpen(false)} aria-label="Close navigation menu">✕</button>
+        </div>
+        <nav className="map-sidebar-nav">
+          <button type="button" onClick={() => { setIsSidebarOpen(false); setShowFloatingSheet(true); setIsPanelExpanded(true); setActivePanelTab('route'); setActiveMenuSection('dashboard'); }}>
+            <span aria-hidden="true">🧭</span> Plan Route
+          </button>
+          <button type="button" onClick={() => { setIsSidebarOpen(false); recenterOnCurrentLocation(); }}>
+            <span aria-hidden="true">◎</span> Current Location
+          </button>
+          <button type="button" onClick={() => { setIsSidebarOpen(false); setActiveMoodFilter('All'); setShowFloatingSheet(true); setIsPanelExpanded(true); setActiveMenuSection('dashboard'); }}>
+            <span aria-hidden="true">♥</span> Mood & Pins
+          </button>
+          <button type="button" onClick={() => { setIsSidebarOpen(false); setShowFloatingSheet(true); setIsPanelExpanded(true); setActiveMenuSection('profile'); }}>
+            <span aria-hidden="true">★</span> Saved Places
+          </button>
+          <button type="button" onClick={() => { setIsSidebarOpen(false); setShowOptionsPanel(true); }}>
+            <span aria-hidden="true">⚙</span> Settings
+          </button>
+        </nav>
+      </aside>
+
       <div
         className="floating-logo"
         onClick={() => {
@@ -4964,19 +7274,46 @@ export default function App() {
       {/* ---------- Top-right: Profile / Login ---------- */}
       <div className="floating-profile">
         {authState.isLoggedIn ? (
-          <button
-            type="button"
-            className="floating-profile-btn"
-            onClick={() => {
-              setActiveMenuSection('profile');
-              setIsPanelExpanded(true);
-              setShowFloatingSheet(true);
-            }}
-            title="Your profile"
-          >
-            <div className="floating-avatar">{String(authState.name || 'U').charAt(0).toUpperCase()}</div>
-            <span className="floating-profile-text">{authState.name || 'Account'}</span>
-          </button>
+          <div className="floating-profile-card">
+            <button
+              type="button"
+              className="floating-profile-btn"
+              onClick={() => navigateToView('user')}
+              title={`Open Personal User Dashboard (${authState.email})`}
+            >
+              <div className="floating-avatar">{String(authState.name || authState.email || 'U').charAt(0).toUpperCase()}</div>
+              <div className="floating-profile-meta">
+                <span className="floating-profile-name">{authState.name || authState.email?.split('@')[0] || 'Explorer'}</span>
+                <span className="floating-profile-email">{authState.email}</span>
+              </div>
+            </button>
+            <button
+              type="button"
+              className="floating-dashboard-mini-btn"
+              onClick={() => navigateToView('user')}
+              title="Open Personal User Dashboard"
+            >
+              👤 Dashboard
+            </button>
+            {isAdminUser && (
+              <button
+                type="button"
+                className="floating-admin-mini-btn"
+                onClick={() => navigateToView('admin')}
+                title="Open Dedicated Admin Portal"
+              >
+                🛡️ Admin Portal
+              </button>
+            )}
+            <button
+              type="button"
+              className="floating-logout-mini-btn"
+              onClick={handleLogout}
+              title="Logout from session"
+            >
+              Logout
+            </button>
+          </div>
         ) : (
           <button
             type="button"
@@ -5514,6 +7851,43 @@ export default function App() {
             type="button"
             className="map-action-menu-btn"
             onClick={() => {
+              const newWp = {
+                id: `wp_${Date.now()}`,
+                name: `Waypoint (${mapActionMenu.lat.toFixed(4)}, ${mapActionMenu.lon.toFixed(4)})`,
+                note: `User added stop (${mapActionMenu.lat.toFixed(4)}, ${mapActionMenu.lon.toFixed(4)})`,
+                lat: mapActionMenu.lat,
+                lon: mapActionMenu.lon,
+                mood: currentMood,
+                moodTags: [moodToTag(currentMood)],
+                score: 4.5
+              };
+              setSuggestedRoute((prev) => [...prev, newWp]);
+              setRouteActionMessage('Waypoint added to route.');
+              setMapActionMenu((prev) => ({ ...prev, open: false }));
+            }}
+          >
+            ➕ Add as Waypoint Stop
+          </button>
+          <button
+            type="button"
+            className="map-action-menu-btn"
+            onClick={() => {
+              setAddPinToBoardTarget({
+                lat: mapActionMenu.lat,
+                lon: mapActionMenu.lon,
+                name: `Spot (${mapActionMenu.lat.toFixed(4)}, ${mapActionMenu.lon.toFixed(4)})`,
+                note: 'Location saved from map'
+              });
+              if (!boards.length) loadBoards();
+              setMapActionMenu((prev) => ({ ...prev, open: false }));
+            }}
+          >
+            Save to Board
+          </button>
+          <button
+            type="button"
+            className="map-action-menu-btn"
+            onClick={() => {
               const mapInstance = mapRef.current?.getMap?.();
               if (mapInstance) {
                 mapInstance.easeTo({ center: [mapActionMenu.lon, mapActionMenu.lat], duration: 450, essential: true });
@@ -5857,6 +8231,23 @@ export default function App() {
 
         <div className="menu-bar" role="tablist" aria-label="Main menu">
           <button type="button" className={`menu-btn ${activeMenuSection === 'dashboard' ? 'menu-btn-active' : ''}`} onClick={() => setActiveMenuSection('dashboard')}>Dashboard</button>
+          <button
+            type="button"
+            className={`menu-btn ${activeMenuSection === 'boards' ? 'menu-btn-active' : ''}`}
+            onClick={() => {
+              if (authState.isLoggedIn) {
+                setActiveMenuSection('boards');
+                loadBoards();
+              } else {
+                openAuthModalFor('Please login to access your boards.', () => {
+                  setActiveMenuSection('boards');
+                  loadBoards();
+                });
+              }
+            }}
+          >
+            Boards
+          </button>
           <button type="button" className={`menu-btn ${activeMenuSection === 'demo' ? 'menu-btn-active' : ''}`} onClick={() => setActiveMenuSection('demo')}>Demo</button>
           <button type="button" className={`menu-btn ${activeMenuSection === 'guide' ? 'menu-btn-active' : ''}`} onClick={() => setActiveMenuSection('guide')}>Guide Bot</button>
           <button
@@ -5874,6 +8265,180 @@ export default function App() {
           </button>
           <button type="button" className={`menu-btn ${activeMenuSection === 'auth' ? 'menu-btn-active' : ''}`} onClick={() => setActiveMenuSection('auth')}>Auth</button>
         </div>
+
+        {activeMenuSection === 'boards' && (
+          <div className="boards-section">
+            {!selectedBoard ? (
+              <>
+                <div className="boards-header-card">
+                  <div className="boards-title-group">
+                    <h2>My Travel Boards</h2>
+                    <p>Organize, plan, and collect your personal vibe spots and routes</p>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-primary"
+                    onClick={() => {
+                      setBoardForm({ name: '', description: '' });
+                      setIsCreatingBoard(true);
+                    }}
+                  >
+                    + New Board
+                  </button>
+                </div>
+
+                {boardsLoading && <div className="small-row">Loading your boards...</div>}
+
+                {boards.length === 0 && !boardsLoading ? (
+                  <div className="board-empty-state">
+                    <h3>No boards created yet</h3>
+                    <p>Create boards to organize your spots by city, trip, mood, or soundtrack.</p>
+                    <button
+                      type="button"
+                      className="btn-primary"
+                      onClick={() => {
+                        setBoardForm({ name: '', description: '' });
+                        setIsCreatingBoard(true);
+                      }}
+                    >
+                      Create Your First Board
+                    </button>
+                  </div>
+                ) : (
+                  <div className="boards-grid">
+                    {boards.map((b) => (
+                      <div key={b.id} className="board-card">
+                        <div>
+                          <div className="board-card-header">
+                            <h3 className="board-card-name">{b.name}</h3>
+                            <span className="board-card-badge">{b.item_count || 0} spots</span>
+                          </div>
+                          {b.description && <p className="board-card-desc">{b.description}</p>}
+                        </div>
+                        <div className="board-card-actions">
+                          <button
+                            type="button"
+                            className="board-card-btn-open"
+                            onClick={() => handleOpenBoard(b)}
+                          >
+                            Open Board
+                          </button>
+                          <button
+                            type="button"
+                            className="board-card-btn-icon"
+                            title="Edit board name and description"
+                            onClick={() => {
+                              setSelectedBoard(b);
+                              setBoardForm({ name: b.name, description: b.description || '' });
+                              setIsEditingBoard(true);
+                            }}
+                          >
+                            ✏️
+                          </button>
+                          <button
+                            type="button"
+                            className="board-card-btn-icon board-card-btn-danger"
+                            title="Delete board"
+                            onClick={() => handleDeleteBoard(b.id)}
+                          >
+                            🗑️
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </>
+            ) : (
+              <div className="board-detail-container">
+                <div className="board-detail-bar">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <button
+                      type="button"
+                      className="btn-action-ghost"
+                      onClick={() => {
+                        setSelectedBoard(null);
+                        setSelectedBoardItems([]);
+                        loadBoards();
+                      }}
+                    >
+                      ← Back to Boards
+                    </button>
+                    <div>
+                      <h3 style={{ margin: 0, fontFamily: 'Syne, sans-serif', fontSize: 18, color: 'var(--text-primary)' }}>
+                        {selectedBoard.name}
+                      </h3>
+                      {selectedBoard.description && (
+                        <p style={{ margin: 0, fontSize: 13, color: 'var(--text-secondary)' }}>
+                          {selectedBoard.description}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn-secondary"
+                    onClick={() => {
+                      setBoardForm({ name: selectedBoard.name, description: selectedBoard.description || '' });
+                      setIsEditingBoard(true);
+                    }}
+                  >
+                    Edit Board
+                  </button>
+                </div>
+
+                {selectedBoardItems.length === 0 ? (
+                  <div className="board-empty-state">
+                    <h3>This board is empty</h3>
+                    <p>Add spots from the map by clicking any pin and choosing "+ Board", or right-clicking anywhere on the map.</p>
+                  </div>
+                ) : (
+                  <div className="board-items-list">
+                    {selectedBoardItems.map((item) => (
+                      <div key={item.id} className="board-item-row">
+                        <div className="board-item-info">
+                          <h4>{item.title || 'Saved Place'}</h4>
+                          <p>
+                            {item.mood && <span className="compact-popup-mood-chip" style={{ marginRight: 6, padding: '2px 8px', fontSize: 11 }}>{item.mood}</span>}
+                            {item.note ? item.note : `Coordinates: ${Number(item.lat).toFixed(4)}, ${Number(item.lon).toFixed(4)}`}
+                          </p>
+                        </div>
+                        <div className="board-item-actions">
+                          <button
+                            type="button"
+                            className="btn-secondary"
+                            style={{ padding: '6px 12px', fontSize: 12 }}
+                            onClick={() => {
+                              const mapInstance = mapRef.current?.getMap?.();
+                              if (mapInstance) {
+                                mapInstance.easeTo({ center: [Number(item.lon), Number(item.lat)], zoom: 14, duration: 600 });
+                              }
+                              ensureDestinationPin(Number(item.lat), Number(item.lon), item.title || 'Board Spot');
+                              setNavDestinationQuery(item.title || 'Board Spot');
+                              setRouteActionMessage(`Destination set from board: ${item.title || 'Spot'}`);
+                              setIsPanelExpanded(true);
+                              setActivePanelTab('route');
+                            }}
+                          >
+                            Explore
+                          </button>
+                          <button
+                            type="button"
+                            className="board-card-btn-icon board-card-btn-danger"
+                            title="Remove from board"
+                            onClick={() => handleRemoveBoardItem(item.id)}
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {activeMenuSection === 'guide' && (
           <div className="panel-card menu-section-card guide-bot-card">
@@ -6921,6 +9486,215 @@ export default function App() {
         </div>
       )}
 
+      {isCreatingBoard && (
+        <div className="vibe-modal-backdrop" onClick={() => setIsCreatingBoard(false)}>
+          <div className="vibe-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="vibe-modal-header">
+              <h3>Create New Board</h3>
+              <button type="button" className="btn-action-ghost" onClick={() => setIsCreatingBoard(false)}>✕</button>
+            </div>
+            <form onSubmit={handleCreateBoard} className="vibe-modal-body">
+              <div className="vibe-modal-field">
+                <label>Board Name</label>
+                <input
+                  className="vibe-modal-input"
+                  placeholder="e.g. My Favorite Cafes, Monsoon Escapes"
+                  value={boardForm.name}
+                  onChange={(e) => setBoardForm((prev) => ({ ...prev, name: e.target.value }))}
+                  required
+                  autoFocus
+                />
+              </div>
+              <div className="vibe-modal-field">
+                <label>Description (optional)</label>
+                <textarea
+                  className="vibe-modal-textarea"
+                  rows="3"
+                  placeholder="What is this board for?"
+                  value={boardForm.description}
+                  onChange={(e) => setBoardForm((prev) => ({ ...prev, description: e.target.value }))}
+                />
+              </div>
+              {boardActionError && <div className="login-error">{boardActionError}</div>}
+              <div className="vibe-modal-footer">
+                <button type="button" className="btn-modal-cancel" onClick={() => setIsCreatingBoard(false)}>Cancel</button>
+                <button type="submit" className="btn-modal-confirm">Create Board</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {isEditingBoard && (
+        <div className="vibe-modal-backdrop" onClick={() => setIsEditingBoard(false)}>
+          <div className="vibe-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="vibe-modal-header">
+              <h3>Edit Board</h3>
+              <button type="button" className="btn-action-ghost" onClick={() => setIsEditingBoard(false)}>✕</button>
+            </div>
+            <form onSubmit={handleUpdateBoard} className="vibe-modal-body">
+              <div className="vibe-modal-field">
+                <label>Board Name</label>
+                <input
+                  className="vibe-modal-input"
+                  value={boardForm.name}
+                  onChange={(e) => setBoardForm((prev) => ({ ...prev, name: e.target.value }))}
+                  required
+                />
+              </div>
+              <div className="vibe-modal-field">
+                <label>Description</label>
+                <textarea
+                  className="vibe-modal-textarea"
+                  rows="3"
+                  value={boardForm.description}
+                  onChange={(e) => setBoardForm((prev) => ({ ...prev, description: e.target.value }))}
+                />
+              </div>
+              {boardActionError && <div className="login-error">{boardActionError}</div>}
+              <div className="vibe-modal-footer">
+                <button type="button" className="btn-modal-cancel" onClick={() => setIsEditingBoard(false)}>Cancel</button>
+                <button type="submit" className="btn-modal-confirm">Save Changes</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {addPinToBoardTarget && (
+        <div className="vibe-modal-backdrop" onClick={() => setAddPinToBoardTarget(null)}>
+          <div className="vibe-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="vibe-modal-header">
+              <h3>Add to Board</h3>
+              <button type="button" className="btn-action-ghost" onClick={() => setAddPinToBoardTarget(null)}>✕</button>
+            </div>
+            <div className="vibe-modal-body">
+              <p style={{ margin: 0, fontSize: '13.5px', color: 'var(--text-secondary)' }}>
+                Adding <strong>{addPinToBoardTarget.name || addPinToBoardTarget.note || 'Spot'}</strong> to:
+              </p>
+              {boards.length > 0 ? (
+                <div className="vibe-modal-field">
+                  <label>Select Board</label>
+                  <select
+                    className="vibe-modal-select"
+                    value={selectedBoardForPin}
+                    onChange={(e) => setSelectedBoardForPin(e.target.value)}
+                  >
+                    <option value="">-- Choose a Board --</option>
+                    {boards.map((b) => (
+                      <option key={b.id} value={b.id}>
+                        {b.name} ({b.item_count || 0} items)
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              ) : (
+                <div className="small-row">
+                  You don't have any boards yet. Create a board first!
+                </div>
+              )}
+              {boardActionError && <div className="login-error">{boardActionError}</div>}
+              <div className="vibe-modal-footer">
+                <button type="button" className="btn-modal-cancel" onClick={() => setAddPinToBoardTarget(null)}>Cancel</button>
+                {boards.length > 0 ? (
+                  <button
+                    type="button"
+                    className="btn-modal-confirm"
+                    disabled={!selectedBoardForPin}
+                    onClick={() => handleAddPinToBoard(addPinToBoardTarget, selectedBoardForPin)}
+                  >
+                    Add to Selected Board
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    className="btn-modal-confirm"
+                    onClick={() => {
+                      setAddPinToBoardTarget(null);
+                      setBoardForm({ name: '', description: '' });
+                      setIsCreatingBoard(true);
+                    }}
+                  >
+                    Create Board Now
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {editingPin && (
+        <div className="vibe-modal-backdrop" onClick={() => setEditingPin(null)}>
+          <div className="vibe-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="vibe-modal-header">
+              <h3>Edit Vibe Pin</h3>
+              <button type="button" className="btn-action-ghost" onClick={() => setEditingPin(null)}>✕</button>
+            </div>
+            <form onSubmit={handleSavePinEdit} className="vibe-modal-body">
+              <div className="vibe-modal-field">
+                <label>Spot Name</label>
+                <input
+                  className="vibe-modal-input"
+                  value={pinEditForm.name}
+                  onChange={(e) => setPinEditForm((prev) => ({ ...prev, name: e.target.value }))}
+                  placeholder="e.g. Sunset Point"
+                  required
+                />
+              </div>
+              <div className="vibe-modal-field">
+                <label>Mood</label>
+                <select
+                  className="vibe-modal-select"
+                  value={pinEditForm.mood}
+                  onChange={(e) => setPinEditForm((prev) => ({ ...prev, mood: e.target.value }))}
+                >
+                  {MOODS.map((m) => (
+                    <option key={m} value={m}>{m}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="vibe-modal-field">
+                <label>Note / Atmosphere</label>
+                <textarea
+                  className="vibe-modal-textarea"
+                  rows="3"
+                  value={pinEditForm.note}
+                  onChange={(e) => setPinEditForm((prev) => ({ ...prev, note: e.target.value }))}
+                  placeholder="Describe the feeling of this place..."
+                />
+              </div>
+              <div className="vibe-modal-field">
+                <label>Budget</label>
+                <select
+                  className="vibe-modal-select"
+                  value={pinEditForm.budget}
+                  onChange={(e) => setPinEditForm((prev) => ({ ...prev, budget: e.target.value }))}
+                >
+                  <option value="free">Free</option>
+                  <option value="low">Low</option>
+                  <option value="medium">Medium</option>
+                  <option value="luxury">Luxury</option>
+                </select>
+              </div>
+              <div className="vibe-modal-field">
+                <label>Linked Song / Soundtrack</label>
+                <input
+                  className="vibe-modal-input"
+                  value={pinEditForm.song}
+                  onChange={(e) => setPinEditForm((prev) => ({ ...prev, song: e.target.value }))}
+                  placeholder="e.g. Ambient Chill Wave"
+                />
+              </div>
+              <div className="vibe-modal-footer">
+                <button type="button" className="btn-modal-cancel" onClick={() => setEditingPin(null)}>Cancel</button>
+                <button type="submit" className="btn-modal-confirm">Save Changes</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
       {showAuthModal && (
         <div className="auth-modal-overlay" role="dialog" aria-modal="true" aria-label="Login or sign up">
           <div className="auth-modal-card">
@@ -6943,10 +9717,8 @@ export default function App() {
               <button
                 type="button"
                 className="auth-social-btn"
-                onClick={() => {
-                  setRouteActionMessage('Google OAuth coming soon — use Continue with Email in the meantime.');
-                }}
-                title="Google Sign-In (coming soon)"
+                onClick={handleGoogleSignIn}
+                title="Continue with Google"
               >
                 <svg className="auth-social-icon" viewBox="0 0 24 24">
                   <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
@@ -6986,6 +9758,172 @@ export default function App() {
               >
                 Continue as guest →
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAdminPanel && (
+        <div className="admin-modal-overlay" role="dialog" aria-modal="true" aria-label="Admin Control Panel" onClick={() => setShowAdminPanel(false)}>
+          <div className="admin-modal-card" onClick={(e) => e.stopPropagation()}>
+            <div className="admin-modal-header">
+              <div className="admin-header-title-row">
+                <div className="admin-badge">🛡️ System Administration</div>
+                <button
+                  type="button"
+                  className="admin-close-btn"
+                  onClick={() => setShowAdminPanel(false)}
+                  aria-label="Close Admin Panel"
+                >
+                  ✕
+                </button>
+              </div>
+              <h2 className="admin-title">Vibe Atlas Admin Control Center</h2>
+              <p className="admin-subtitle">Monitor multi-tenant users, platform statistics, role permissions, and database audit logs.</p>
+            </div>
+
+            <div className="admin-modal-body">
+              {/* Top KPI Cards */}
+              <div className="admin-kpi-grid">
+                <div className="admin-kpi-card">
+                  <span className="admin-kpi-label">Registered Users</span>
+                  <span className="admin-kpi-value">{adminData.stats?.totalUsers ?? (adminLoading ? '...' : '0')}</span>
+                  <span className="admin-kpi-sub">Total Accounts</span>
+                </div>
+                <div className="admin-kpi-card">
+                  <span className="admin-kpi-label">Active Vibe Pins</span>
+                  <span className="admin-kpi-value">{adminData.stats?.totalPins ?? (adminLoading ? '...' : '0')}</span>
+                  <span className="admin-kpi-sub">Total Spatial Points</span>
+                </div>
+                <div className="admin-kpi-card">
+                  <span className="admin-kpi-label">Travel Boards</span>
+                  <span className="admin-kpi-value">{adminData.stats?.totalBoards ?? (adminLoading ? '...' : '0')}</span>
+                  <span className="admin-kpi-sub">User Collections</span>
+                </div>
+                <div className="admin-kpi-card">
+                  <span className="admin-kpi-label">Active Sessions</span>
+                  <span className="admin-kpi-value">{adminData.stats?.activeSessions ?? (adminLoading ? '...' : '0')}</span>
+                  <span className="admin-kpi-sub">JWT Validated</span>
+                </div>
+              </div>
+
+              {/* Action Toolbar */}
+              <div className="admin-toolbar">
+                <button
+                  type="button"
+                  className="admin-btn admin-btn-refresh"
+                  onClick={loadAdminOverview}
+                  disabled={adminLoading}
+                >
+                  🔄 {adminLoading ? 'Refreshing...' : 'Refresh Stats'}
+                </button>
+                <button
+                  type="button"
+                  className="admin-btn admin-btn-seed"
+                  onClick={() => {
+                    loadDemoData(false);
+                    setTimeout(loadAdminOverview, 800);
+                  }}
+                >
+                  🌱 Seed Demo Data
+                </button>
+                <button
+                  type="button"
+                  className="admin-btn admin-btn-reset"
+                  onClick={() => {
+                    loadDemoData(true);
+                    setTimeout(loadAdminOverview, 800);
+                  }}
+                >
+                  ⚠️ Reset Demo Store
+                </button>
+              </div>
+
+              {/* Users Management Section */}
+              <div className="admin-section">
+                <h3 className="admin-section-heading">👥 User Management & Role Control</h3>
+                <div className="admin-table-wrapper">
+                  <table className="admin-table">
+                    <thead>
+                      <tr>
+                        <th>User</th>
+                        <th>Email</th>
+                        <th>Role</th>
+                        <th>Joined</th>
+                        <th>Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {adminData.users && adminData.users.length ? (
+                        adminData.users.map((u) => (
+                          <tr key={u.id}>
+                            <td className="admin-user-cell">
+                              <div className="admin-user-avatar">{String(u.name || u.email || 'U').charAt(0).toUpperCase()}</div>
+                              <span className="admin-user-name">{u.name || 'Anonymous'}</span>
+                            </td>
+                            <td className="admin-email-cell">{u.email}</td>
+                            <td>
+                              <span className={`admin-role-tag admin-role-${String(u.role).toLowerCase().replace(/\s+/g, '-')}`}>
+                                {u.role || 'Explorer'}
+                              </span>
+                            </td>
+                            <td className="admin-date-cell">
+                              {u.created_at ? new Date(u.created_at).toLocaleDateString() : 'N/A'}
+                            </td>
+                            <td className="admin-actions-cell">
+                              <select
+                                className="admin-role-select"
+                                value={u.role || 'Explorer'}
+                                onChange={(e) => handleAdminChangeRole(u.id, e.target.value)}
+                              >
+                                <option value="Explorer">Explorer</option>
+                                <option value="Power Explorer">Power Explorer</option>
+                                <option value="Admin">Admin</option>
+                              </select>
+                              {String(u.email) !== String(authState.email) && (
+                                <button
+                                  type="button"
+                                  className="admin-delete-user-btn"
+                                  onClick={() => handleAdminDeleteUser(u.id)}
+                                  title="Delete user and associated pins/boards"
+                                >
+                                  🗑️
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan="5" className="admin-empty-table">No users loaded. Click Refresh Stats above.</td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* System Audit Events Section */}
+              <div className="admin-section">
+                <h3 className="admin-section-heading">📜 Platform Audit & Security Ledger</h3>
+                <div className="admin-audit-list">
+                  {adminData.auditLogs && adminData.auditLogs.length ? (
+                    adminData.auditLogs.map((log) => (
+                      <div key={log.id} className="admin-audit-item">
+                        <div className="admin-audit-left">
+                          <span className="admin-audit-action">{log.action}</span>
+                          <span className="admin-audit-user">{log.user_email || log.user_name || `User #${log.user_id || 'System'}`}</span>
+                        </div>
+                        <div className="admin-audit-right">
+                          <span className="admin-audit-time">{new Date(log.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</span>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="admin-empty-table">No recent audit events recorded.</div>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
         </div>

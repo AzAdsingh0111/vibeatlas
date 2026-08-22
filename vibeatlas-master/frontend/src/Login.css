@@ -47,11 +47,14 @@
 }
 
 .login-page-modal .login-box {
-  width: min(100%, 430px);
+  width: 100%;
   margin: 0;
-  background: rgba(12, 23, 40, 0.76);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.5);
+  padding: 0;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .login-box h1 {

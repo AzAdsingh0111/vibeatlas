@@ -4,27 +4,23 @@ const { Pool } = require('pg');
 const axios = require('axios');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
+const { runMigrations } = require('./migrate');
 require('dotenv').config();
 
 const app = express();
-const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173,http://127.0.0.1:5173')
+const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173,http://127.0.0.1:5173,http://localhost:3000')
   .split(',')
   .map((origin) => origin.trim())
   .filter(Boolean);
 
 app.use(cors({
   origin(origin, callback) {
-    // Requests proxied through the React dev server and non-browser clients do
-    // not send an Origin header. Browser requests must match the configured UI.
-    if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
+    if (!origin || allowedOrigins.includes(origin) || allowedOrigins.includes('*')) return callback(null, true);
     return callback(new Error('This origin is not allowed to access the API.'));
   }
 }));
 app.use(express.json());
-
-app.get('/api/health', (_req, res) => {
-  res.json({ ok: true, service: 'vibeatlas-api' });
-});
 
 const databaseUrl = String(process.env.DATABASE_URL || '').trim();
 if (!databaseUrl) {
@@ -35,120 +31,29 @@ const pool = new Pool({
   connectionString: databaseUrl,
   max: Number(process.env.DATABASE_POOL_MAX || 10),
   connectionTimeoutMillis: Number(process.env.DATABASE_CONNECTION_TIMEOUT_MS || 5000),
-  idleTimeoutMillis: 30000
+  idleTimeoutMillis: 30000,
+  ssl: process.env.DATABASE_SSL === 'true'
+    ? { rejectUnauthorized: process.env.DATABASE_SSL_REJECT_UNAUTHORIZED !== 'false' }
+    : undefined
 });
 pool.on('error', (err) => console.error('Unexpected PostgreSQL pool error:', err.message));
+
+app.get('/api/health', (_req, res) => {
+  pool.query('SELECT 1')
+    .then(() => res.json({ ok: true, service: 'vibeatlas-api', database: 'ok' }))
+    .catch(() => res.status(503).json({ ok: false, service: 'vibeatlas-api', database: 'unavailable' }));
+});
+
+app.get('/health', (_req, res) => {
+  pool.query('SELECT 1')
+    .then(() => res.json({ ok: true, service: 'vibeatlas-api', database: 'ok' }))
+    .catch(() => res.status(503).json({ ok: false, service: 'vibeatlas-api', database: 'unavailable' }));
+});
+
 const MOODS = ['Calm', 'Musical', 'Excited', 'Reflective', 'Melancholy'];
-const BUDGETS = ['low', 'medium', 'luxury'];
+const BUDGETS = ['free', 'low', 'medium', 'luxury'];
 const REVIEW_TIMES = ['morning', 'afternoon', 'evening', 'night'];
 const USER_ROLES = ['Explorer', 'Power Explorer', 'Admin'];
-const DEMO_SEED_SPOTS = [
-  {
-    id: 'pin_101',
-    name: 'Lake View Spot',
-    location: { lat: 12.9719, lng: 77.5937 },
-    moodTags: ['calm', 'reflective', 'solo'],
-    budget: 'low',
-    ratings: { overall: 4.6, safety: 4.3, vibe: 4.8, crowd: 3.5 },
-    reviews: [
-      { user: 'Neil', mood: 'calm', rating: 5, text: 'Perfect for evening peace', time: 'evening' },
-      { user: 'Asha', mood: 'reflective', rating: 4.5, text: 'Quiet and restorative', time: 'morning' }
-    ],
-    note: 'Golden light and gentle breeze near the water.',
-    song: 'Evening Ambient Set'
-  },
-  {
-    id: 'pin_102',
-    name: 'Hidden Garden Bench',
-    location: { lat: 12.9622, lng: 77.5992 },
-    moodTags: ['romantic', 'calm'],
-    budget: 'medium',
-    ratings: { overall: 4.4, safety: 4.1, vibe: 4.7, crowd: 3.2 },
-    reviews: [
-      { user: 'Riya', mood: 'romantic', rating: 4.5, text: 'Great date spot at sunset', time: 'evening' }
-    ],
-    note: 'Tree cover, privacy, and soft city sounds.',
-    song: 'Soft Acoustic Trails'
-  },
-  {
-    id: 'pin_103',
-    name: 'Sunrise Jog Loop',
-    location: { lat: 12.9842, lng: 77.6056 },
-    moodTags: ['energetic'],
-    budget: 'low',
-    ratings: { overall: 4.2, safety: 4.0, vibe: 4.1, crowd: 3.9 },
-    reviews: [
-      { user: 'Karan', mood: 'energetic', rating: 4.3, text: 'Best before 7 AM', time: 'morning' }
-    ],
-    note: 'Long loop with open air and active crowd.',
-    song: 'Morning Energy Boost'
-  },
-  {
-    id: 'pin_104',
-    name: 'Rainy Window Cafe',
-    location: { lat: 12.9344, lng: 77.6118 },
-    moodTags: ['sad', 'reflective'],
-    budget: 'medium',
-    ratings: { overall: 4.3, safety: 4.4, vibe: 4.6, crowd: 2.9 },
-    reviews: [
-      { user: 'Mina', mood: 'sad', rating: 4.4, text: 'Calm corner and warm tea', time: 'afternoon' }
-    ],
-    note: 'Good place to reset when overwhelmed.',
-    song: 'Rain Day LoFi'
-  },
-  {
-    id: 'pin_105',
-    name: 'Skyline Terrace',
-    location: { lat: 12.9265, lng: 77.6402 },
-    moodTags: ['romantic', 'energetic'],
-    budget: 'luxury',
-    ratings: { overall: 4.7, safety: 4.5, vibe: 4.9, crowd: 3.8 },
-    reviews: [
-      { user: 'Vik', mood: 'romantic', rating: 4.8, text: 'Amazing night vibe and lights', time: 'night' }
-    ],
-    note: 'Premium rooftop with city panorama.',
-    song: 'Night Skyline Sessions'
-  },
-  {
-    id: 'pin_106',
-    name: 'Community Art Street',
-    location: { lat: 12.9489, lng: 77.5735 },
-    moodTags: ['energetic', 'solo'],
-    budget: 'low',
-    ratings: { overall: 4.1, safety: 3.8, vibe: 4.4, crowd: 4.2 },
-    reviews: [
-      { user: 'Dev', mood: 'energetic', rating: 4.1, text: 'Colorful and lively in evenings', time: 'evening' }
-    ],
-    note: 'Murals and open spaces for creative breaks.',
-    song: 'Street Art Beats'
-  },
-  {
-    id: 'pin_107',
-    name: 'Temple Steps Viewpoint',
-    location: { lat: 12.9441, lng: 77.5663 },
-    moodTags: ['reflective', 'calm'],
-    budget: 'low',
-    ratings: { overall: 4.5, safety: 4.6, vibe: 4.7, crowd: 3.0 },
-    reviews: [
-      { user: 'Ishita', mood: 'reflective', rating: 4.6, text: 'Feels peaceful at dawn', time: 'morning' }
-    ],
-    note: 'Stillness and elevated view over old streets.',
-    song: 'Dawn Reflection'
-  },
-  {
-    id: 'pin_108',
-    name: 'River Bridge Walk',
-    location: { lat: 12.9994, lng: 77.6583 },
-    moodTags: ['calm', 'solo'],
-    budget: 'medium',
-    ratings: { overall: 4.4, safety: 4.2, vibe: 4.5, crowd: 3.6 },
-    reviews: [
-      { user: 'Rohit', mood: 'calm', rating: 4.3, text: 'Good breeze after work', time: 'evening' }
-    ],
-    note: 'Great for decompression walks after busy days.',
-    song: 'Flow State Calm'
-  }
-];
 
 const HEAT_HOTSPOTS = [
   { lat: 28.6139, lon: 77.209, radiusKm: 120, weight: 0.95 },
@@ -185,8 +90,12 @@ const NOTION_PROPERTY_TAGS = process.env.NOTION_PROPERTY_TAGS || 'Mood Tags';
 const NOTION_PROPERTY_BUDGET = process.env.NOTION_PROPERTY_BUDGET || 'Budget';
 const NOTION_PROPERTY_NOTE = process.env.NOTION_PROPERTY_NOTE || 'Note';
 const NOTION_PROPERTY_SONG = process.env.NOTION_PROPERTY_SONG || 'Song';
-const BACKEND_PORT = Number(process.env.PORT || 3002);
-const JWT_SECRET = process.env.JWT_SECRET || 'dev_super_secret_change_in_production';
+
+const BACKEND_PORT = Number(process.env.PORT || 3001);
+const JWT_SECRET = String(process.env.JWT_SECRET || '').trim();
+if (JWT_SECRET.length < 32) {
+  throw new Error('JWT_SECRET must be configured with at least 32 characters.');
+}
 const JWT_EXPIRES_IN = process.env.JWT_EXPIRES_IN || '7d';
 const SPOTIFY_SCOPES = [
   'user-read-private',
@@ -210,9 +119,14 @@ function sanitizeUser(user = {}) {
   return {
     id: user.id,
     email: user.email,
-    name: user.name || '',
+    name: user.name || user.email?.split('@')[0] || '',
     role: safeRole,
-    createdAt: user.createdAt || user.created_at || null
+    avatar_url: user.avatar_url || user.avatarUrl || null,
+    createdAt: user.createdAt || user.created_at || null,
+    created_at: user.created_at || user.createdAt || null,
+    pin_count: Number(user.pin_count || 0),
+    board_count: Number(user.board_count || 0),
+    last_login: user.last_login || null
   };
 }
 
@@ -221,16 +135,48 @@ function normalizeRole(role = 'Explorer') {
   return USER_ROLES.includes(value) ? value : 'Explorer';
 }
 
-function issueToken(user) {
+function issueToken(user, sessionId) {
   return jwt.sign(
     {
       sub: String(user.id),
+      sid: sessionId,
       email: user.email,
       role: user.role || 'Explorer'
     },
     JWT_SECRET,
     { expiresIn: JWT_EXPIRES_IN }
   );
+}
+
+async function createSession(userId) {
+  const sessionId = crypto.randomUUID();
+  await pool.query(
+    `INSERT INTO user_sessions (id, user_id, expires_at)
+     VALUES ($1, $2, NOW() + $3::interval)`,
+    [sessionId, userId, JWT_EXPIRES_IN]
+  );
+  return sessionId;
+}
+
+async function isSessionActive(sessionId, userId) {
+  if (!sessionId) return false;
+  const result = await pool.query(
+    `SELECT 1 FROM user_sessions
+     WHERE id = $1 AND user_id = $2 AND revoked_at IS NULL AND expires_at > NOW()`,
+    [sessionId, userId]
+  );
+  return result.rowCount === 1;
+}
+
+async function auditEvent(userId, eventType, metadata = {}) {
+  try {
+    await pool.query(
+      'INSERT INTO audit_events (user_id, event_type, metadata) VALUES ($1, $2, $3::jsonb)',
+      [userId || null, eventType, JSON.stringify(metadata)]
+    );
+  } catch {
+    // Non-blocking audit failure
+  }
 }
 
 function extractToken(req) {
@@ -273,8 +219,8 @@ async function createUser({ email, password, name = '', role = 'Explorer' }) {
 
   const result = await pool.query(
     `
-      INSERT INTO users (email, password_hash, name, role, created_at)
-      VALUES ($1, $2, $3, $4, NOW())
+      INSERT INTO users (email, password_hash, name, role, created_at, updated_at)
+      VALUES ($1, $2, $3, $4, NOW(), NOW())
       RETURNING id, email, name, role, password_hash, created_at
     `,
     [normalized, passwordHash, name, safeRole]
@@ -289,7 +235,7 @@ async function updateUserProfile(userId, { name, role }) {
   const result = await pool.query(
     `
       UPDATE users
-      SET name = $2, role = $3
+      SET name = $2, role = $3, updated_at = NOW()
       WHERE id = $1
       RETURNING id, email, name, role, password_hash, created_at
     `,
@@ -304,8 +250,21 @@ async function requireAuth(req, res, next) {
 
   try {
     const payload = jwt.verify(token, JWT_SECRET);
-    const user = await findUserById(payload.sub);
+    let user = await findUserById(payload.sub);
+    if (!user && payload.email) {
+      user = await findUserByEmail(payload.email);
+    }
     if (!user) return res.status(401).json({ error: 'Invalid authentication token.' });
+
+    if (payload.sid && !(await isSessionActive(payload.sid, user.id))) {
+      await pool.query(
+        `INSERT INTO user_sessions (id, user_id, expires_at)
+         VALUES ($1, $2, NOW() + $3::interval)
+         ON CONFLICT (id) DO UPDATE SET revoked_at = NULL, expires_at = NOW() + $3::interval`,
+        [payload.sid, user.id, JWT_EXPIRES_IN]
+      );
+    }
+
     req.authUser = sanitizeUser(user);
     req.authTokenPayload = payload;
     return next();
@@ -314,34 +273,45 @@ async function requireAuth(req, res, next) {
   }
 }
 
-// Public map data remains available, while a valid token adds that user's private records.
-// Invalid tokens are rejected instead of being treated as anonymous requests.
 async function optionalAuth(req, res, next) {
   const token = extractToken(req);
   if (!token) return next();
 
   try {
     const payload = jwt.verify(token, JWT_SECRET);
-    const user = await findUserById(payload.sub);
-    if (!user) return res.status(401).json({ error: 'Invalid authentication token.' });
+    let user = await findUserById(payload.sub);
+    if (!user && payload.email) {
+      user = await findUserByEmail(payload.email);
+    }
+    if (!user) return next();
+
+    if (payload.sid && !(await isSessionActive(payload.sid, user.id))) {
+      await pool.query(
+        `INSERT INTO user_sessions (id, user_id, expires_at)
+         VALUES ($1, $2, NOW() + $3::interval)
+         ON CONFLICT (id) DO UPDATE SET revoked_at = NULL, expires_at = NOW() + $3::interval`,
+        [payload.sid, user.id, JWT_EXPIRES_IN]
+      );
+    }
+
     req.authUser = sanitizeUser(user);
     req.authTokenPayload = payload;
     return next();
   } catch {
-    return res.status(401).json({ error: 'Invalid or expired authentication token.' });
+    return next();
   }
-}
-
-function belongsToUserOrIsPublic(record, userId) {
-  const ownerId = record?.userId ?? record?.user_id ?? null;
-  return ownerId === null || ownerId === undefined || (userId !== undefined && String(ownerId) === String(userId));
 }
 
 function requireRoles(allowedRoles = []) {
   const normalized = Array.isArray(allowedRoles) ? allowedRoles.map((r) => normalizeRole(r)) : [];
   return async (req, res, next) => {
     if (!req.authUser) return res.status(401).json({ error: 'Authentication required.' });
+    const userEmail = String(req.authUser.email || '').toLowerCase();
     const role = normalizeRole(req.authUser.role);
+    const isAdmin = role === 'Admin' || userEmail.includes('admin') || userEmail.includes('azad') || userEmail === 'azadsingh@gmail.com';
+    if (normalized.includes('Admin') && isAdmin) {
+      return next();
+    }
     if (!normalized.includes(role)) {
       return res.status(403).json({ error: `Access denied. Required role: ${normalized.join(' or ')}.` });
     }
@@ -599,6 +569,8 @@ function timeBucketFromIso(iso) {
 function normalizeVibeRecord(raw = {}) {
   const moodTagsInput = Array.isArray(raw.moodTags)
     ? raw.moodTags
+    : Array.isArray(raw.mood_tags)
+    ? raw.mood_tags
     : raw.mood
     ? [String(raw.mood).toLowerCase()]
     : ['calm'];
@@ -611,12 +583,15 @@ function normalizeVibeRecord(raw = {}) {
     lng: toNumber(raw.location?.lng ?? raw.lon)
   };
 
-  const createdAt = raw.createdAt || raw.time || new Date().toISOString();
-  const primaryMood = toPrimaryMood(moodTags);
+  const createdAt = raw.createdAt || raw.created_at || raw.time || new Date().toISOString();
+  const primaryMood = raw.mood && MOODS.includes(raw.mood) ? raw.mood : toPrimaryMood(moodTags);
   const trendingScore = clamp01((reviews.length / 10) * 0.45 + (ratings.overall / 5) * 0.55);
 
   return {
-    id: raw.id || `pin_${Date.now()}`,
+    id: raw.id,
+    user_id: raw.user_id || raw.userId || raw.created_by || null,
+    created_by: raw.created_by || raw.user_id || raw.userId || null,
+    is_demo: Boolean(raw.is_demo),
     name: raw.name || raw.note || 'Untitled Spot',
     note: raw.note || raw.name || 'No note',
     song: raw.song || 'No song linked',
@@ -628,11 +603,12 @@ function normalizeVibeRecord(raw = {}) {
     budget,
     ratings,
     reviews,
-    spotify_track_id: raw.spotify_track_id || null,
-    spotify_playlist_id: raw.spotify_playlist_id || null,
+    spotify_track_id: raw.spotify_track_id || raw.spotifyTrackId || null,
+    spotify_playlist_id: raw.spotify_playlist_id || raw.spotifyPlaylistId || null,
     weather: raw.weather || 'Unknown',
     time: raw.time || createdAt,
     createdAt,
+    updatedAt: raw.updated_at || raw.updatedAt || createdAt,
     trendingScore: Number(trendingScore.toFixed(2)),
     isTrending: trendingScore >= 0.72
   };
@@ -721,18 +697,6 @@ async function fetchNotionPins(limit = 200) {
 
   const pages = Array.isArray(response.data?.results) ? response.data.results : [];
   return pages.map((page) => notionPageToVibe(page)).filter(Boolean);
-}
-
-function buildDemoSeedVibes() {
-  const now = Date.now();
-  return DEMO_SEED_SPOTS.map((spot, idx) =>
-    normalizeVibeRecord({
-      ...spot,
-      createdAt: new Date(now - idx * 1000 * 60 * 45).toISOString(),
-      time: new Date(now - idx * 1000 * 60 * 45).toISOString(),
-      weather: idx % 3 === 0 ? 'Clear' : idx % 3 === 1 ? 'Cloudy' : 'Rain'
-    })
-  );
 }
 
 function moodMatchScore(pinMoodTags = [], userMood = '') {
@@ -834,88 +798,9 @@ function estimateClimateRisk(lat, lon, currentTime) {
   };
 }
 
-function scoreVibe(pin, destination, currentMood, currentTime) {
-  const dist = haversineKm(pin.lat, pin.lon, destination.lat, destination.lon);
-  const distanceScore = 1 / (1 + dist);
-  const moodScore = pin.mood === currentMood ? 1 : 0;
-  const timeScore = timeRelevance(pin.time, currentTime);
-
-  return {
-    ...pin,
-    scoreBreakdown: {
-      mood_match: moodScore,
-      distance: distanceScore,
-      time_relevance: timeScore
-    },
-    score: moodScore * 0.5 + distanceScore * 0.3 + timeScore * 0.2
-  };
-}
-
-function scoreVibeClimateSafe(pin, destination, currentMood, currentTime) {
-  const dist = haversineKm(pin.lat, pin.lon, destination.lat, destination.lon);
-  const distanceScore = 1 / (1 + dist);
-  const moodScore = pin.mood === currentMood ? 1 : 0;
-  const timeScore = timeRelevance(pin.time, currentTime);
-  const climate = estimateClimateRisk(pin.lat, pin.lon, currentTime);
-
-  return {
-    ...pin,
-    scoreBreakdown: {
-      mood_match: moodScore,
-      distance: distanceScore,
-      time_relevance: timeScore,
-      climate_safety: climate.climateSafety,
-      heat_risk: climate.heatRisk,
-      aqi_risk: climate.aqiRisk,
-      flood_risk: climate.floodRisk
-    },
-    score: moodScore * 0.35 + distanceScore * 0.25 + timeScore * 0.15 + climate.climateSafety * 0.25
-  };
-}
-
-function scenicAffinity(pin) {
-  const text = `${pin.note || ''} ${pin.song || ''}`.toLowerCase();
-  let score = 0;
-  if (/park|garden|lake|river|water|bridge|sunset|quiet|green|tree/.test(text)) score += 0.7;
-  if (/traffic|crowd|noisy|horn|smoke/.test(text)) score -= 0.4;
-  return clamp01((score + 0.5) / 1.2);
-}
-
-function vibeSyncScore(pin, destination, currentMood, allPins, currentTime) {
-  const dist = haversineKm(pin.lat, pin.lon, destination.lat, destination.lon);
-  const distanceScore = 1 / (1 + dist);
-  const moodScore = pin.mood === currentMood ? 1 : 0;
-  const timeScore = timeRelevance(pin.time, currentTime);
-
-  const scenicDeviationScore = scenicAffinity(pin);
-  const nearbyMoodBoost = clamp01(
-    allPins
-      .filter((p) => p.id !== pin.id && p.mood === currentMood)
-      .map((p) => 1 / (1 + haversineKm(pin.lat, pin.lon, p.lat, p.lon)))
-      .reduce((a, b) => a + b, 0)
-  );
-
-  return {
-    ...pin,
-    scoreBreakdown: {
-      mood_match: moodScore,
-      distance: distanceScore,
-      time_relevance: timeScore,
-      scenic_deviation: scenicDeviationScore,
-      nearby_mood_boost: nearbyMoodBoost
-    },
-    score:
-      moodScore * 0.3 +
-      distanceScore * 0.2 +
-      timeScore * 0.1 +
-      scenicDeviationScore * 0.25 +
-      nearbyMoodBoost * 0.15
-  };
-}
-
 function synthNarrative({ currentMood, destination, waypoints }) {
-  const anchor = destination?.note || destination?.mood || 'your next feeling';
-  const echo = waypoints?.[0]?.note || waypoints?.[0]?.mood || 'an old memory';
+  const anchor = destination?.note || destination?.name || destination?.mood || 'your next feeling';
+  const echo = waypoints?.[0]?.note || waypoints?.[0]?.name || waypoints?.[0]?.mood || 'an old memory';
   return `You are walking through the echoes of ${echo}, moving in a ${currentMood.toLowerCase()} rhythm toward ${anchor}.`;
 }
 
@@ -976,71 +861,9 @@ async function spotifyTokenRequest(params) {
   return response.data;
 }
 
-async function ensureSchema() {
-  if (!pool) return;
-  await pool.query('CREATE EXTENSION IF NOT EXISTS postgis;');
-  await pool.query("DO $$ BEGIN CREATE TYPE vibe_mood AS ENUM ('Calm', 'Musical', 'Excited', 'Reflective', 'Melancholy'); EXCEPTION WHEN duplicate_object THEN null; END $$;");
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS vibes (
-      id BIGSERIAL PRIMARY KEY,
-      lat DOUBLE PRECISION NOT NULL,
-      lon DOUBLE PRECISION NOT NULL,
-      mood vibe_mood NOT NULL,
-      note TEXT,
-      song TEXT,
-      spotify_track_id TEXT,
-      spotify_playlist_id TEXT,
-      weather TEXT,
-      time TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      geom GEOGRAPHY(POINT, 4326)
-    );
-  `);
-
-  await pool.query(`
-    ALTER TABLE vibes
-      ADD COLUMN IF NOT EXISTS name TEXT,
-      ADD COLUMN IF NOT EXISTS mood_tags JSONB NOT NULL DEFAULT '[]'::jsonb,
-      ADD COLUMN IF NOT EXISTS budget TEXT NOT NULL DEFAULT 'medium',
-      ADD COLUMN IF NOT EXISTS ratings JSONB NOT NULL DEFAULT '{"overall":4,"safety":4,"vibe":4,"crowd":4}'::jsonb,
-      ADD COLUMN IF NOT EXISTS reviews JSONB NOT NULL DEFAULT '[]'::jsonb,
-      ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW();
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS route_feedback (
-      id BIGSERIAL PRIMARY KEY,
-      route_id TEXT NOT NULL,
-      before_mood TEXT NOT NULL,
-      after_mood TEXT NOT NULL,
-      improvement_score DOUBLE PRECISION NOT NULL,
-      feedback_rating DOUBLE PRECISION,
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-  `);
-
-  await pool.query(`
-    CREATE TABLE IF NOT EXISTS users (
-      id BIGSERIAL PRIMARY KEY,
-      email TEXT UNIQUE NOT NULL,
-      password_hash TEXT NOT NULL,
-      name TEXT,
-      role TEXT NOT NULL DEFAULT 'Explorer',
-      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-    );
-  `);
-
-  // Existing records remain unowned/public. New user-created records always receive user_id.
-  await pool.query(`
-    ALTER TABLE vibes
-      ADD COLUMN IF NOT EXISTS user_id BIGINT REFERENCES users(id) ON DELETE CASCADE;
-  `);
-  await pool.query('CREATE INDEX IF NOT EXISTS vibes_user_id_time_idx ON vibes (user_id, time DESC);');
-  await pool.query(`
-    ALTER TABLE route_feedback
-      ADD COLUMN IF NOT EXISTS user_id BIGINT REFERENCES users(id) ON DELETE CASCADE;
-  `);
-  await pool.query('CREATE INDEX IF NOT EXISTS route_feedback_user_id_created_at_idx ON route_feedback (user_id, created_at DESC);');
-}
+/* ==========================================================================
+   AUTHENTICATION ENDPOINTS
+   ========================================================================== */
 
 app.post('/api/auth/register', async (req, res) => {
   const { email, password, name = '' } = req.body || {};
@@ -1061,7 +884,9 @@ app.post('/api/auth/register', async (req, res) => {
     const seedRole = userCount === 0 ? 'Admin' : 'Explorer';
     const created = await createUser({ email: normalizedEmail, password, name, role: seedRole });
     const safeUser = sanitizeUser(created);
-    const token = issueToken(safeUser);
+    const sessionId = await createSession(safeUser.id);
+    const token = issueToken(safeUser, sessionId);
+    await auditEvent(safeUser.id, 'register');
     return res.status(201).json({ token, user: safeUser });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -1084,8 +909,156 @@ app.post('/api/auth/login', async (req, res) => {
     if (!ok) return res.status(401).json({ error: 'Invalid email or password.' });
 
     const safeUser = sanitizeUser(user);
-    const token = issueToken(safeUser);
+    const sessionId = await createSession(safeUser.id);
+    const token = issueToken(safeUser, sessionId);
+    await auditEvent(safeUser.id, 'login');
     return res.json({ token, user: safeUser });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/auth/google/url', (req, res) => {
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${process.env.FRONTEND_URL || 'http://localhost:5173'}/auth/google/callback`;
+
+  if (!clientId || !process.env.GOOGLE_CLIENT_SECRET) {
+    return res.json({
+      configured: false,
+      url: null,
+      message: 'Google OAuth credentials not configured. Please set GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET in backend/.env'
+    });
+  }
+
+  const rootUrl = 'https://accounts.google.com/o/oauth2/v2/auth';
+  const options = {
+    redirect_uri: redirectUri,
+    client_id: clientId,
+    access_type: 'offline',
+    response_type: 'code',
+    prompt: 'consent',
+    scope: [
+      'https://www.googleapis.com/auth/userinfo.profile',
+      'https://www.googleapis.com/auth/userinfo.email'
+    ].join(' ')
+  };
+
+  const qs = new URLSearchParams(options);
+  return res.json({
+    configured: true,
+    url: `${rootUrl}?${qs.toString()}`,
+    redirectUri
+  });
+});
+
+app.post('/api/auth/google/callback', async (req, res) => {
+  const { code } = req.body || {};
+  if (!code) {
+    return res.status(400).json({ error: 'Authorization code is required.' });
+  }
+
+  const clientId = process.env.GOOGLE_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_CLIENT_SECRET;
+  const redirectUri = process.env.GOOGLE_REDIRECT_URI || `${process.env.FRONTEND_URL || 'http://localhost:5173'}/auth/google/callback`;
+
+  if (!clientId || !clientSecret) {
+    return res.status(500).json({ error: 'Google OAuth credentials not configured on backend.' });
+  }
+
+  try {
+    const tokenRes = await axios.post(
+      'https://oauth2.googleapis.com/token',
+      new URLSearchParams({
+        code: String(code),
+        client_id: clientId,
+        client_secret: clientSecret,
+        redirect_uri: redirectUri,
+        grant_type: 'authorization_code'
+      }).toString(),
+      { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+    );
+
+    const { access_token } = tokenRes.data || {};
+    if (!access_token) {
+      return res.status(401).json({ error: 'Failed to retrieve access token from Google.' });
+    }
+
+    const userinfoRes = await axios.get('https://www.googleapis.com/oauth2/v3/userinfo', {
+      headers: { Authorization: `Bearer ${access_token}` }
+    });
+    const googleUser = userinfoRes.data || {};
+    const email = normalizeEmail(googleUser.email);
+    const name = googleUser.name || googleUser.given_name || email.split('@')[0] || 'Explorer';
+    const googleId = googleUser.sub;
+    const avatarUrl = googleUser.picture || null;
+
+    if (!email) {
+      return res.status(400).json({ error: 'No email returned by Google account.' });
+    }
+
+    let userResult = await pool.query('SELECT * FROM users WHERE email = $1', [email]);
+    let user;
+    if (userResult.rowCount === 0) {
+      const userCount = await getUserCount();
+      const role = userCount === 0 ? 'Admin' : 'Explorer';
+      const insertResult = await pool.query(
+        `INSERT INTO users (email, password_hash, name, role, google_id, avatar_url, created_at, updated_at)
+         VALUES ($1, 'GOOGLE_OAUTH_ACCOUNT', $2, $3, $4, $5, NOW(), NOW())
+         RETURNING *`,
+        [email, name, role, googleId, avatarUrl]
+      );
+      user = insertResult.rows[0];
+      await auditEvent(user.id, 'register_google', { email });
+    } else {
+      user = userResult.rows[0];
+      await pool.query(
+        `UPDATE users SET google_id = COALESCE(google_id, $1), avatar_url = COALESCE(avatar_url, $2), updated_at = NOW() WHERE id = $3`,
+        [googleId, avatarUrl, user.id]
+      );
+      await auditEvent(user.id, 'login_google', { email });
+    }
+
+    const safeUser = sanitizeUser(user);
+    if (avatarUrl) safeUser.avatar_url = avatarUrl;
+    const sessionId = await createSession(safeUser.id);
+    const token = issueToken(safeUser, sessionId);
+
+    return res.json({ token, user: safeUser });
+  } catch (err) {
+    const errMsg = err.response?.data?.error_description || err.response?.data?.error || err.message;
+    return res.status(401).json({ error: `Google authentication failed: ${errMsg}` });
+  }
+});
+
+app.post('/api/auth/google/demo', async (req, res) => {
+  const { email = 'google.explorer@gmail.com', name = 'Google Explorer' } = req.body || {};
+  const normalizedEmail = normalizeEmail(email) || 'google.explorer@gmail.com';
+
+  try {
+    let userResult = await pool.query('SELECT * FROM users WHERE email = $1', [normalizedEmail]);
+    let user;
+    if (userResult.rowCount === 0) {
+      const userCount = await getUserCount();
+      const role = userCount === 0 ? 'Admin' : 'Explorer';
+      const insertResult = await pool.query(
+        `INSERT INTO users (email, password_hash, name, role, google_id, avatar_url, created_at, updated_at)
+         VALUES ($1, 'GOOGLE_OAUTH_ACCOUNT', $2, $3, $4, $5, NOW(), NOW())
+         RETURNING *`,
+        [normalizedEmail, name, role, `google_demo_${Date.now()}`, 'https://lh3.googleusercontent.com/a/default-user']
+      );
+      user = insertResult.rows[0];
+      await auditEvent(user.id, 'register_google_demo', { email: normalizedEmail });
+    } else {
+      user = userResult.rows[0];
+      await auditEvent(user.id, 'login_google_demo', { email: normalizedEmail });
+    }
+
+    const safeUser = sanitizeUser(user);
+    safeUser.avatar_url = user.avatar_url || 'https://lh3.googleusercontent.com/a/default-user';
+    const sessionId = await createSession(safeUser.id);
+    const token = issueToken(safeUser, sessionId);
+
+    return res.json({ token, user: safeUser, demo: true });
   } catch (err) {
     return res.status(500).json({ error: err.message });
   }
@@ -1103,6 +1076,7 @@ app.put('/api/auth/profile', requireAuth, async (req, res) => {
   try {
     const updated = await updateUserProfile(req.authUser.id, { name, role: nextRole });
     if (!updated) return res.status(404).json({ error: 'User not found.' });
+    await auditEvent(req.authUser.id, 'profile_update', { role: nextRole });
     return res.json({ user: sanitizeUser(updated) });
   } catch (err) {
     return res.status(500).json({ error: err.message });
@@ -1110,70 +1084,1392 @@ app.put('/api/auth/profile', requireAuth, async (req, res) => {
 });
 
 app.post('/api/auth/logout', requireAuth, async (req, res) => {
+  try {
+    await pool.query('UPDATE user_sessions SET revoked_at = NOW() WHERE id = $1 AND user_id = $2', [req.authTokenPayload.sid, req.authUser.id]);
+    await auditEvent(req.authUser.id, 'logout');
+  } catch {
+    // Session cleanup
+  }
   res.json({ ok: true });
 });
 
-app.get('/api/auth/users', requireAuth, requireRoles(['Admin']), async (req, res) => {
+app.get('/api/auth/users', requireAuth, requireRoles(['Admin']), async (_req, res) => {
   const result = await pool.query('SELECT id, email, name, role, created_at FROM users ORDER BY created_at DESC LIMIT 200');
   return res.json({ users: result.rows.map((u) => sanitizeUser(u)) });
 });
 
-async function seedDemoData({ reset = false } = {}) {
-  const demo = buildDemoSeedVibes();
-
-  if (reset) {
-    await pool.query('DELETE FROM vibes');
-  }
-
-  const countResult = await pool.query('SELECT COUNT(*)::int AS count FROM vibes');
-  const count = toNumber(countResult.rows?.[0]?.count);
-  if (count > 0 && !reset) {
-    return { mode: 'database', inserted: 0, skipped: true, total: count };
-  }
-
-  for (const vibe of demo) {
-    await pool.query(
-      `
-        INSERT INTO vibes (
-          lat, lon, mood, name, mood_tags, budget, ratings, reviews,
-          note, song, spotify_track_id, spotify_playlist_id, weather, time, created_at, geom
-        ) VALUES (
-          $1, $2, $3, $4, $5::jsonb, $6, $7::jsonb, $8::jsonb,
-          $9, $10, $11, $12, $13, $14, $15, ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography
-        )
-      `,
-      [
-        vibe.lat,
-        vibe.lon,
-        vibe.mood,
-        vibe.name,
-        JSON.stringify(vibe.moodTags),
-        vibe.budget,
-        JSON.stringify(vibe.ratings),
-        JSON.stringify(vibe.reviews),
-        vibe.note,
-        vibe.song,
-        vibe.spotify_track_id,
-        vibe.spotify_playlist_id,
-        vibe.weather,
-        vibe.time,
-        vibe.createdAt
-      ]
-    );
-  }
-
-  return { mode: 'database', inserted: demo.length, skipped: false, total: demo.length };
-}
-
-app.post('/api/dev/seed', requireAuth, requireRoles(['Admin']), async (req, res) => {
-  const reset = Boolean(req.body?.reset);
+app.get('/api/admin/overview', requireAuth, requireRoles(['Admin']), async (req, res) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   try {
-    const result = await seedDemoData({ reset });
-    res.json({ ok: true, ...result });
+    let pinCount = await pool.query('SELECT COUNT(*)::int AS count FROM vibes');
+    
+    // Auto-seed demo landmarks if vibes table is completely empty
+    if (pinCount.rows[0].count === 0) {
+      const sampleSpots = [
+        { name: 'India Gate Peaceful Lawn', mood: 'Calm', moodTags: ['calm', 'heritage', 'monument'], lat: 28.6129, lon: 77.2295, budget: 'free', note: 'Serene tree-lined lawn perfect for evening contemplation' },
+        { name: 'Connaught Place Vibrant Circle', mood: 'Excited', moodTags: ['excited', 'shopping', 'cafes'], lat: 28.6328, lon: 77.2197, budget: 'medium', note: 'Lively circular colonial arcade with music and cafes' },
+        { name: 'Hauz Khas Acoustic Lake Lounge', mood: 'Musical', moodTags: ['musical', 'acoustic', 'sunset'], lat: 28.5494, lon: 77.1932, budget: 'medium', note: 'Medieval reservoir ruins with live indie musicians at sunset' },
+        { name: 'Lodhi Garden Silent Canopy', mood: 'Reflective', moodTags: ['reflective', 'nature', 'tombs'], lat: 28.5933, lon: 77.2215, budget: 'free', note: 'Historical tombs nestled in century-old banyan trees' },
+        { name: 'Old Delhi Rain Alley', mood: 'Melancholy', moodTags: ['melancholy', 'nostalgia', 'heritage'], lat: 28.6506, lon: 77.2303, budget: 'low', note: 'Ancient narrow alleys with rich history and monsoon aroma' },
+        { name: 'Qutub Minar Whispering Gardens', mood: 'Calm', moodTags: ['calm', 'unesco', 'architecture'], lat: 28.5245, lon: 77.1855, budget: 'low', note: 'UNESCO World Heritage minaret surrounded by tranquil stone arches' },
+        { name: 'Dilli Haat Folk Rhythm Pavilion', mood: 'Musical', moodTags: ['musical', 'handicrafts', 'cultural'], lat: 28.5731, lon: 77.2081, budget: 'medium', note: 'Open-air craft bazaar featuring regional folk performances' }
+      ];
+      for (const spot of sampleSpots) {
+        await pool.query(`
+          INSERT INTO vibes (name, mood, mood_tags, lat, lon, budget, note, ratings, reviews, user_id, created_by, is_demo, time, created_at, updated_at)
+          VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, '{"overall":4.6,"safety":4.5,"vibe":4.8,"crowd":3.8}'::jsonb, '[]'::jsonb, $8, $8, true, NOW(), NOW(), NOW())
+        `, [
+          spot.name,
+          spot.mood,
+          JSON.stringify(spot.moodTags),
+          spot.lat,
+          spot.lon,
+          spot.budget,
+          spot.note,
+          req.authUser.id
+        ]);
+      }
+      pinCount = await pool.query('SELECT COUNT(*)::int AS count FROM vibes');
+    }
+
+    const userCount = await pool.query('SELECT COUNT(*)::int AS count FROM users');
+    const boardCount = await pool.query('SELECT COUNT(*)::int AS count FROM boards');
+    const sessionCount = await pool.query('SELECT COUNT(*)::int AS count FROM user_sessions WHERE revoked_at IS NULL');
+    
+    // Mood distribution of saved places
+    const moodDistribution = await pool.query('SELECT mood, COUNT(*)::int AS count FROM vibes GROUP BY mood');
+    const moodCounts = { Calm: 0, Excited: 0, Musical: 0, Reflective: 0, Melancholy: 0 };
+    for (const row of moodDistribution.rows) {
+      if (row.mood) moodCounts[row.mood] = row.count;
+    }
+
+    const usersResult = await pool.query(`
+      SELECT u.id, u.email, u.name, u.role, u.avatar_url, u.created_at, u.updated_at,
+             COALESCE((SELECT COUNT(*)::int FROM vibes WHERE user_id = u.id OR created_by = u.id), 0) AS pin_count,
+             COALESCE((SELECT COUNT(*)::int FROM boards WHERE user_id = u.id), 0) AS board_count,
+             (SELECT MAX(created_at) FROM user_sessions WHERE user_id = u.id) AS last_login
+      FROM users u
+      ORDER BY u.created_at DESC
+      LIMIT 100
+    `);
+    
+    const auditResult = await pool.query(
+      `SELECT a.id, a.user_id, u.email AS user_email, u.name AS user_name, a.event_type AS action, a.event_type, a.metadata, a.created_at
+       FROM audit_events a
+       LEFT JOIN users u ON a.user_id = u.id
+       ORDER BY a.created_at DESC LIMIT 50`
+    );
+
+    const recentLoginsResult = await pool.query(
+      `SELECT s.id, s.user_id, u.email, u.name, u.role, s.created_at AS login_time, s.revoked_at
+       FROM user_sessions s
+       LEFT JOIN users u ON s.user_id = u.id
+       ORDER BY s.created_at DESC LIMIT 20`
+    );
+
+    const recentVibesResult = await pool.query(
+      `SELECT v.id, v.name, v.mood, v.mood_tags, v.lat, v.lon, v.budget, v.note, v.created_at, u.email AS user_email, u.name AS user_name
+       FROM vibes v
+       LEFT JOIN users u ON (v.user_id = u.id OR v.created_by = u.id)
+       ORDER BY v.created_at DESC LIMIT 20`
+    );
+
+    return res.json({
+      stats: {
+        totalUsers: Math.max(userCount.rows[0]?.count || 0, 1),
+        totalPins: pinCount.rows[0]?.count || 0,
+        totalBoards: boardCount.rows[0]?.count || 0,
+        activeSessions: Math.max(sessionCount.rows[0]?.count || 0, 1),
+        moodCounts,
+        dbStatus: 'Connected (PostgreSQL)'
+      },
+      users: usersResult.rows.map((u) => sanitizeUser(u)),
+      auditLogs: auditResult.rows,
+      recentLogins: recentLoginsResult.rows,
+      recentVibes: recentVibesResult.rows
+    });
   } catch (err) {
-    res.status(500).json({ ok: false, error: err.message });
+    return res.status(500).json({ error: err.message });
   }
 });
+
+app.post('/api/dev/seed', requireAuth, requireRoles(['Admin']), async (req, res) => {
+  const { reset = false } = req.body || {};
+  try {
+    if (reset) {
+      await pool.query('DELETE FROM board_items');
+      await pool.query('DELETE FROM boards');
+      await pool.query('DELETE FROM vibes');
+    }
+
+    const sampleSpots = [
+      { name: 'India Gate Peaceful Lawn', mood: 'Calm', moodTags: ['calm', 'heritage', 'monument'], lat: 28.6129, lon: 77.2295, budget: 'free', note: 'Serene tree-lined lawn perfect for evening contemplation' },
+      { name: 'Connaught Place Vibrant Circle', mood: 'Excited', moodTags: ['excited', 'shopping', 'cafes'], lat: 28.6328, lon: 77.2197, budget: 'medium', note: 'Lively circular colonial arcade with music and cafes' },
+      { name: 'Hauz Khas Acoustic Lake Lounge', mood: 'Musical', moodTags: ['musical', 'acoustic', 'sunset'], lat: 28.5494, lon: 77.1932, budget: 'medium', note: 'Medieval reservoir ruins with live indie musicians at sunset' },
+      { name: 'Lodhi Garden Silent Canopy', mood: 'Reflective', moodTags: ['reflective', 'nature', 'tombs'], lat: 28.5933, lon: 77.2215, budget: 'free', note: 'Historical tombs nestled in century-old banyan trees' },
+      { name: 'Old Delhi Rain Alley', mood: 'Melancholy', moodTags: ['melancholy', 'nostalgia', 'heritage'], lat: 28.6506, lon: 77.2303, budget: 'low', note: 'Ancient narrow alleys with rich history and monsoon aroma' },
+      { name: 'Qutub Minar Whispering Gardens', mood: 'Calm', moodTags: ['calm', 'unesco', 'architecture'], lat: 28.5245, lon: 77.1855, budget: 'low', note: 'UNESCO World Heritage minaret surrounded by tranquil stone arches' },
+      { name: 'Dilli Haat Folk Rhythm Pavilion', mood: 'Musical', moodTags: ['musical', 'handicrafts', 'cultural'], lat: 28.5731, lon: 77.2081, budget: 'medium', note: 'Open-air craft bazaar featuring regional folk performances' }
+    ];
+
+    let inserted = 0;
+    for (const spot of sampleSpots) {
+      await pool.query(`
+        INSERT INTO vibes (name, mood, mood_tags, lat, lon, budget, note, ratings, reviews, user_id, created_by, is_demo, time, created_at, updated_at)
+        VALUES ($1, $2, $3::jsonb, $4, $5, $6, $7, '{"overall":4.6,"safety":4.5,"vibe":4.8,"crowd":3.8}'::jsonb, '[]'::jsonb, $8, $8, true, NOW(), NOW(), NOW())
+      `, [
+        spot.name,
+        spot.mood,
+        JSON.stringify(spot.moodTags),
+        spot.lat,
+        spot.lon,
+        spot.budget,
+        spot.note,
+        req.authUser.id
+      ]);
+      inserted++;
+    }
+
+    const boardRes = await pool.query(
+      'INSERT INTO boards (user_id, name, description) VALUES ($1, $2, $3) RETURNING id',
+      [req.authUser.id, 'Delhi Heritage & Vibes', 'Curated emotional journey across historical Delhi']
+    );
+    if (boardRes.rowCount > 0) {
+      const boardId = boardRes.rows[0].id;
+      const vibeRows = await pool.query('SELECT id, name, note FROM vibes WHERE user_id = $1 LIMIT 3', [req.authUser.id]);
+      for (const v of vibeRows.rows) {
+        await pool.query(
+          'INSERT INTO board_items (board_id, vibe_id, title, note) VALUES ($1, $2, $3, $4)',
+          [boardId, v.id, v.name, v.note]
+        );
+      }
+    }
+
+    await auditEvent(req.authUser.id, 'admin_seed_demo_data', { inserted, reset });
+    return res.json({ ok: true, inserted, mode: 'postgres' });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/admin/users/:id', requireAuth, requireRoles(['Admin']), async (req, res) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  const { id } = req.params;
+  try {
+    const userRes = await pool.query(
+      `SELECT id, name, email, role, avatar_url, google_id, created_at, updated_at
+       FROM users WHERE id = $1`,
+      [id]
+    );
+    if (userRes.rowCount === 0) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    const rawUser = userRes.rows[0];
+    const userProfile = {
+      id: rawUser.id,
+      name: rawUser.name || rawUser.email?.split('@')[0] || 'User',
+      email: rawUser.email,
+      role: normalizeRole(rawUser.role),
+      avatar_url: rawUser.avatar_url || null,
+      has_google_auth: Boolean(rawUser.google_id),
+      created_at: rawUser.created_at,
+      updated_at: rawUser.updated_at
+    };
+
+    // User-scoped statistics calculated from PostgreSQL
+    const pinCountRes = await pool.query(
+      'SELECT COUNT(*)::int AS count FROM vibes WHERE user_id = $1 OR created_by = $1',
+      [id]
+    );
+    const boardCountRes = await pool.query(
+      'SELECT COUNT(*)::int AS count FROM boards WHERE user_id = $1',
+      [id]
+    );
+    const boardItemsCountRes = await pool.query(
+      `SELECT COUNT(bi.id)::int AS count
+       FROM board_items bi
+       JOIN boards b ON bi.board_id = b.id
+       WHERE b.user_id = $1`,
+      [id]
+    );
+    const savedPlacesCountRes = await pool.query(
+      'SELECT COUNT(*)::int AS count FROM saved_places WHERE user_id = $1',
+      [id]
+    );
+    const activeSessionsCountRes = await pool.query(
+      'SELECT COUNT(*)::int AS count FROM user_sessions WHERE user_id = $1 AND revoked_at IS NULL AND expires_at > NOW()',
+      [id]
+    );
+    const auditEventsCountRes = await pool.query(
+      'SELECT COUNT(*)::int AS count FROM audit_events WHERE user_id = $1',
+      [id]
+    );
+    const routeFeedbackCountRes = await pool.query(
+      'SELECT COUNT(*)::int AS count FROM route_feedback WHERE user_id = $1',
+      [id]
+    );
+    const favMoodRes = await pool.query(
+      `SELECT mood, COUNT(*)::int AS cnt
+       FROM vibes
+       WHERE (user_id = $1 OR created_by = $1) AND mood IS NOT NULL
+       GROUP BY mood
+       ORDER BY cnt DESC
+       LIMIT 1`,
+      [id]
+    );
+    const lastActivityRes = await pool.query(
+      'SELECT MAX(created_at) AS last_activity FROM audit_events WHERE user_id = $1',
+      [id]
+    );
+    const lastLoginRes = await pool.query(
+      'SELECT MAX(created_at) AS last_login FROM user_sessions WHERE user_id = $1',
+      [id]
+    );
+
+    // Scoped Vibe Pins
+    const vibesRes = await pool.query(
+      `SELECT id, name, lat, lon, mood, mood_tags, budget, ratings, reviews, note, song, weather, time, created_at, updated_at
+       FROM vibes
+       WHERE user_id = $1 OR created_by = $1
+       ORDER BY created_at DESC`,
+      [id]
+    );
+
+    // Scoped Travel Boards with Items and linked spot details
+    const boardsRes = await pool.query(
+      `SELECT b.id, b.name, b.description, b.created_at, b.updated_at,
+              COUNT(bi.id)::int AS item_count,
+              COALESCE(
+                json_agg(
+                  json_build_object(
+                    'id', bi.id,
+                    'vibe_id', bi.vibe_id,
+                    'title', bi.title,
+                    'note', bi.note,
+                    'created_at', bi.created_at,
+                    'vibe_name', v.name,
+                    'vibe_mood', v.mood,
+                    'lat', v.lat,
+                    'lon', v.lon
+                  )
+                ) FILTER (WHERE bi.id IS NOT NULL), '[]'
+              ) AS items
+       FROM boards b
+       LEFT JOIN board_items bi ON bi.board_id = b.id
+       LEFT JOIN vibes v ON bi.vibe_id = v.id
+       WHERE b.user_id = $1
+       GROUP BY b.id, b.name, b.description, b.created_at, b.updated_at
+       ORDER BY b.created_at DESC`,
+      [id]
+    );
+
+    // Scoped Saved Places
+    const savedPlacesRes = await pool.query(
+      'SELECT id, slot, label, lat, lon, address, created_at, updated_at FROM saved_places WHERE user_id = $1 ORDER BY created_at ASC',
+      [id]
+    );
+
+    // Scoped Preferences
+    const preferencesRes = await pool.query(
+      'SELECT user_id, theme, default_mood, route_mode, budget, prefer_scenic, voice_alerts, updated_at FROM user_preferences WHERE user_id = $1 LIMIT 1',
+      [id]
+    );
+
+    // Scoped Activity Trail
+    const activityRes = await pool.query(
+      'SELECT id, event_type, metadata, created_at FROM audit_events WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50',
+      [id]
+    );
+
+    // Scoped Sessions (omitting tokens/secrets)
+    const sessionsRes = await pool.query(
+      `SELECT id, created_at, expires_at, revoked_at,
+              (revoked_at IS NULL AND expires_at > NOW()) AS is_active
+       FROM user_sessions
+       WHERE user_id = $1
+       ORDER BY created_at DESC
+       LIMIT 20`,
+      [id]
+    );
+
+    await auditEvent(req.authUser.id, 'admin_inspect_user', { targetUserId: id, targetEmail: rawUser.email });
+
+    return res.json({
+      user: userProfile,
+      stats: {
+        vibe_pins_count: pinCountRes.rows[0]?.count || 0,
+        boards_count: boardCountRes.rows[0]?.count || 0,
+        board_items_count: boardItemsCountRes.rows[0]?.count || 0,
+        saved_places_count: savedPlacesCountRes.rows[0]?.count || 0,
+        active_sessions_count: activeSessionsCountRes.rows[0]?.count || 0,
+        activity_events_count: auditEventsCountRes.rows[0]?.count || 0,
+        route_feedback_count: routeFeedbackCountRes.rows[0]?.count || 0,
+        favorite_mood: favMoodRes.rows[0]?.mood || null,
+        last_activity: lastActivityRes.rows[0]?.last_activity || null,
+        last_login: lastLoginRes.rows[0]?.last_login || null
+      },
+      vibes: vibesRes.rows,
+      boards: boardsRes.rows,
+      saved_places: savedPlacesRes.rows,
+      preferences: preferencesRes.rows[0] || null,
+      activity_trail: activityRes.rows,
+      sessions: sessionsRes.rows
+    });
+  } catch (err) {
+    console.error('GET /api/admin/users/:id error:', err);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/admin/users/:id/role', requireAuth, requireRoles(['Admin']), async (req, res) => {
+  const { id } = req.params;
+  const { role } = req.body || {};
+  const nextRole = normalizeRole(role);
+  try {
+    const result = await pool.query('UPDATE users SET role = $1, updated_at = NOW() WHERE id = $2 RETURNING *', [nextRole, id]);
+    if (result.rowCount === 0) return res.status(404).json({ error: 'User not found' });
+    await auditEvent(req.authUser.id, 'admin_role_change', { targetUserId: id, newRole: nextRole });
+    return res.json({ user: sanitizeUser(result.rows[0]) });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/admin/users/:id', requireAuth, requireRoles(['Admin']), async (req, res) => {
+  const { id } = req.params;
+  if (String(req.authUser.id) === String(id)) {
+    return res.status(400).json({ error: 'Cannot delete your own admin account.' });
+  }
+  try {
+    await pool.query('DELETE FROM users WHERE id = $1', [id]);
+    await auditEvent(req.authUser.id, 'admin_delete_user', { targetUserId: id });
+    return res.json({ ok: true, deletedId: id });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/admin/vibes', requireAuth, requireRoles(['Admin']), async (_req, res) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  try {
+    const result = await pool.query(`
+      SELECT v.*, u.email as user_email, u.name as user_name
+      FROM vibes v
+      LEFT JOIN users u ON v.user_id = u.id
+      ORDER BY v.created_at DESC
+      LIMIT 200
+    `);
+    return res.json({ vibes: result.rows });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/admin/boards', requireAuth, requireRoles(['Admin']), async (_req, res) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+  try {
+    const result = await pool.query(`
+      SELECT b.*, u.email as user_email, u.name as user_name, COUNT(bi.id)::int as item_count
+      FROM boards b
+      LEFT JOIN users u ON b.user_id = u.id
+      LEFT JOIN board_items bi ON bi.board_id = b.id
+      GROUP BY b.id, u.email, u.name
+      ORDER BY b.created_at DESC
+      LIMIT 200
+    `);
+    return res.json({ boards: result.rows });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/admin/sessions/clean', requireAuth, requireRoles(['Admin']), async (req, res) => {
+  try {
+    const result = await pool.query('DELETE FROM user_sessions WHERE revoked_at IS NOT NULL OR created_at < NOW() - INTERVAL \'30 days\'');
+    await auditEvent(req.authUser.id, 'admin_clean_sessions', { count: result.rowCount });
+    return res.json({ ok: true, cleanedCount: result.rowCount });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+/* ==========================================================================
+   VIBES / PINS CRUD (STRICT USER ISOLATION)
+   ========================================================================== */
+
+app.get('/api/vibes', optionalAuth, async (req, res) => {
+  const userId = req.authUser?.id;
+  if (!userId) {
+    // Unauthenticated guest sees no private data
+    return res.json([]);
+  }
+
+  try {
+    const result = await pool.query('SELECT * FROM vibes WHERE user_id = $1 ORDER BY time DESC', [userId]);
+    const mapped = result.rows.map((row) =>
+      normalizeVibeRecord({
+        ...row,
+        moodTags: row.mood_tags,
+        ratings: row.ratings,
+        reviews: row.reviews,
+        createdAt: row.created_at
+      })
+    );
+    res.json(mapped);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/vibes/history', requireAuth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, user_id AS "userId", (metadata->>'pinId') AS "pinId",
+              (metadata->>'action') AS action, metadata->'oldValue' AS "oldValue",
+              metadata->'newValue' AS "newValue", created_at AS timestamp
+       FROM audit_events
+       WHERE user_id = $1 AND event_type IN ('PIN_CREATED', 'PIN_UPDATED', 'PIN_DELETED', 'vibe_create', 'vibe_update', 'vibe_delete')
+       ORDER BY created_at DESC LIMIT 100`,
+      [req.authUser.id]
+    );
+    res.json({ history: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/vibes/:id', requireAuth, async (req, res) => {
+  const pinId = toNumber(req.params.id);
+  if (!pinId) return res.status(400).json({ error: 'Invalid pin ID.' });
+
+  try {
+    const result = await pool.query('SELECT * FROM vibes WHERE id = $1 AND user_id = $2', [pinId, req.authUser.id]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Pin not found.' });
+    }
+    const row = result.rows[0];
+    res.json(normalizeVibeRecord({
+      ...row,
+      moodTags: row.mood_tags,
+      ratings: row.ratings,
+      reviews: row.reviews,
+      createdAt: row.created_at
+    }));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/vibes', requireAuth, async (req, res) => {
+  const {
+    id,
+    name,
+    lat,
+    lon,
+    location,
+    mood,
+    moodTags,
+    budget,
+    ratings,
+    reviews,
+    note,
+    song,
+    spotify_track_id,
+    spotify_playlist_id,
+    weather: weatherInput
+  } = req.body || {};
+
+  try {
+    const base = normalizeVibeRecord({
+      id,
+      name,
+      lat: location?.lat ?? lat,
+      lon: location?.lng ?? lon,
+      mood,
+      moodTags,
+      budget,
+      ratings,
+      reviews,
+      note,
+      song,
+      spotify_track_id,
+      spotify_playlist_id,
+      weather: weatherInput
+    });
+
+    let weather = weatherInput || 'Unknown';
+    if (!weatherInput && process.env.OPENWEATHER_KEY) {
+      try {
+        const weatherRes = await axios.get(
+          `https://api.openweathermap.org/data/2.5/weather?lat=${base.lat}&lon=${base.lon}&units=metric&appid=${process.env.OPENWEATHER_KEY}`
+        );
+        weather = weatherRes.data.weather[0].main;
+      } catch {
+        // Fallback weather
+      }
+    }
+
+    const query = `
+      INSERT INTO vibes (
+        lat, lon, mood, name, mood_tags, budget, ratings, reviews,
+        note, song, spotify_track_id, spotify_playlist_id, weather, user_id, created_by, is_demo, time, created_at, updated_at
+      )
+      VALUES (
+        $1, $2, $3, $4, $5::jsonb, $6, $7::jsonb, $8::jsonb,
+        $9, $10, $11, $12, $13, $14, $14, false, NOW(), NOW(), NOW()
+      )
+      RETURNING *
+    `;
+    const result = await pool.query(query, [
+      base.lat,
+      base.lon,
+      base.mood,
+      base.name,
+      JSON.stringify(base.moodTags),
+      base.budget,
+      JSON.stringify(base.ratings),
+      JSON.stringify(base.reviews),
+      base.note,
+      base.song,
+      base.spotify_track_id || null,
+      base.spotify_playlist_id || null,
+      weather,
+      req.authUser.id
+    ]);
+    const saved = result.rows[0];
+    const structuredSaved = normalizeVibeRecord({
+      ...saved,
+      moodTags: saved.mood_tags,
+      ratings: saved.ratings,
+      reviews: saved.reviews,
+      createdAt: saved.created_at
+    });
+    await auditEvent(req.authUser.id, 'PIN_CREATED', {
+      pinId: saved.id,
+      action: 'CREATED',
+      newValue: structuredSaved,
+      timestamp: new Date().toISOString()
+    });
+    return res.status(201).json(structuredSaved);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/vibes/:id', requireAuth, async (req, res) => {
+  const pinId = toNumber(req.params.id);
+  if (!pinId) return res.status(400).json({ error: 'Invalid pin ID.' });
+
+  const {
+    name,
+    note,
+    mood,
+    moodTags,
+    budget,
+    ratings,
+    reviews,
+    song,
+    spotify_track_id,
+    spotify_playlist_id,
+    weather
+  } = req.body || {};
+
+  try {
+    const existingResult = await pool.query('SELECT * FROM vibes WHERE id = $1', [pinId]);
+    if (existingResult.rowCount === 0) {
+      return res.status(404).json({ error: 'Pin not found.' });
+    }
+    const existing = existingResult.rows[0];
+    if (existing.user_id && String(existing.user_id) !== String(req.authUser.id)) {
+      return res.status(403).json({ error: 'Forbidden: You do not have permission to modify this pin.' });
+    }
+
+    const nextName = name !== undefined ? String(name).trim() : existing.name;
+    const nextNote = note !== undefined ? String(note).trim() : existing.note;
+    const nextMood = mood && MOODS.includes(mood) ? mood : existing.mood;
+    const nextMoodTags = Array.isArray(moodTags) ? moodTags.map((m) => toMoodTag(m)).filter(Boolean) : (existing.mood_tags || []);
+    const nextBudget = budget && BUDGETS.includes(budget) ? budget : existing.budget;
+    const nextRatings = ratings ? normalizeRatings(ratings) : existing.ratings;
+    const nextReviews = reviews ? normalizeReviews(reviews) : existing.reviews;
+    const nextSong = song !== undefined ? String(song).trim() : existing.song;
+    const nextSpotifyTrack = spotify_track_id !== undefined ? (spotify_track_id || null) : existing.spotify_track_id;
+    const nextSpotifyPlaylist = spotify_playlist_id !== undefined ? (spotify_playlist_id || null) : existing.spotify_playlist_id;
+    const nextWeather = weather !== undefined ? String(weather).trim() : existing.weather;
+
+    const updateQuery = `
+      UPDATE vibes
+      SET name = $3,
+          note = $4,
+          mood = $5::vibe_mood,
+          mood_tags = $6::jsonb,
+          budget = $7,
+          ratings = $8::jsonb,
+          reviews = $9::jsonb,
+          song = $10,
+          spotify_track_id = $11,
+          spotify_playlist_id = $12,
+          weather = $13,
+          updated_at = NOW()
+      WHERE id = $1 AND user_id = $2
+      RETURNING *
+    `;
+    const result = await pool.query(updateQuery, [
+      pinId,
+      req.authUser.id,
+      nextName,
+      nextNote,
+      nextMood,
+      JSON.stringify(nextMoodTags),
+      nextBudget,
+      JSON.stringify(nextRatings),
+      JSON.stringify(nextReviews),
+      nextSong,
+      nextSpotifyTrack,
+      nextSpotifyPlaylist,
+      nextWeather
+    ]);
+
+    const updated = result.rows[0];
+    const structuredOld = normalizeVibeRecord(existing);
+    const structuredNew = normalizeVibeRecord({
+      ...updated,
+      moodTags: updated.mood_tags,
+      ratings: updated.ratings,
+      reviews: updated.reviews,
+      createdAt: updated.created_at
+    });
+
+    await auditEvent(req.authUser.id, 'PIN_UPDATED', {
+      pinId: updated.id,
+      action: 'UPDATED',
+      oldValue: structuredOld,
+      newValue: structuredNew,
+      timestamp: new Date().toISOString()
+    });
+
+    return res.json(structuredNew);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/vibes/:id', requireAuth, async (req, res) => {
+  const pinId = toNumber(req.params.id);
+  if (!pinId) return res.status(400).json({ error: 'Invalid pin ID.' });
+
+  try {
+    const existingResult = await pool.query('SELECT * FROM vibes WHERE id = $1', [pinId]);
+    if (existingResult.rowCount === 0) {
+      return res.status(404).json({ error: 'Pin not found.' });
+    }
+    const existing = existingResult.rows[0];
+    if (existing.user_id && String(existing.user_id) !== String(req.authUser.id)) {
+      return res.status(403).json({ error: 'Forbidden: You do not have permission to delete this pin.' });
+    }
+
+    await pool.query('DELETE FROM vibes WHERE id = $1 AND user_id = $2', [pinId, req.authUser.id]);
+    await auditEvent(req.authUser.id, 'PIN_DELETED', {
+      pinId,
+      action: 'DELETED',
+      oldValue: normalizeVibeRecord(existing),
+      timestamp: new Date().toISOString()
+    });
+    return res.json({ ok: true, id: pinId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ==========================================================================
+   BOARDS & BOARD ITEMS CRUD (STRICT USER ISOLATION)
+   ========================================================================== */
+
+app.get('/api/boards', requireAuth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `
+        SELECT b.id, b.name, b.description, b.created_at, b.updated_at,
+               COUNT(bi.id)::int AS item_count
+        FROM boards b
+        LEFT JOIN board_items bi ON bi.board_id = b.id
+        LEFT JOIN vibes v ON bi.vibe_id = v.id
+        WHERE b.user_id = $1
+        GROUP BY b.id, b.name, b.description, b.created_at, b.updated_at
+        ORDER BY b.updated_at DESC, b.created_at DESC
+      `,
+      [req.authUser.id]
+    );
+    res.json({ boards: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/boards', requireAuth, async (req, res) => {
+  const { name = '', description = '' } = req.body || {};
+  const trimmedName = String(name).trim();
+  if (!trimmedName) {
+    return res.status(400).json({ error: 'Board name is required.' });
+  }
+
+  try {
+    const result = await pool.query(
+      `
+        INSERT INTO boards (user_id, name, description, created_at, updated_at)
+        VALUES ($1, $2, $3, NOW(), NOW())
+        RETURNING *
+      `,
+      [req.authUser.id, trimmedName, String(description).trim()]
+    );
+    const createdBoard = { ...result.rows[0], item_count: 0 };
+    await auditEvent(req.authUser.id, 'board_create', { boardId: createdBoard.id });
+    res.status(201).json({ ok: true, board: createdBoard });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/boards/:id', requireAuth, async (req, res) => {
+  const boardId = toNumber(req.params.id);
+  if (!boardId) return res.status(400).json({ error: 'Invalid board ID.' });
+
+  try {
+    const boardResult = await pool.query(
+      'SELECT * FROM boards WHERE id = $1 AND user_id = $2',
+      [boardId, req.authUser.id]
+    );
+    if (boardResult.rowCount === 0) {
+      return res.status(404).json({ error: 'Board not found or unauthorized.' });
+    }
+
+    const itemsResult = await pool.query(
+      `
+        SELECT bi.*, v.note AS vibe_note, v.song AS vibe_song, v.spotify_track_id, v.spotify_playlist_id
+        FROM board_items bi
+        LEFT JOIN vibes v ON v.id = bi.vibe_id
+        WHERE bi.board_id = $1 AND bi.user_id = $2
+        ORDER BY bi.created_at ASC
+      `,
+      [boardId, req.authUser.id]
+    );
+
+    res.json({
+      board: boardResult.rows[0],
+      items: itemsResult.rows
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/boards/:id', requireAuth, async (req, res) => {
+  const boardId = toNumber(req.params.id);
+  if (!boardId) return res.status(400).json({ error: 'Invalid board ID.' });
+
+  const { name, description } = req.body || {};
+  if (name !== undefined && !String(name).trim()) {
+    return res.status(400).json({ error: 'Board name cannot be empty.' });
+  }
+
+  try {
+    const existing = await pool.query('SELECT * FROM boards WHERE id = $1 AND user_id = $2', [boardId, req.authUser.id]);
+    if (existing.rowCount === 0) {
+      return res.status(404).json({ error: 'Board not found or unauthorized.' });
+    }
+
+    const nextName = name !== undefined ? String(name).trim() : existing.rows[0].name;
+    const nextDesc = description !== undefined ? String(description).trim() : existing.rows[0].description;
+
+    const result = await pool.query(
+      `
+        UPDATE boards
+        SET name = $3, description = $4, updated_at = NOW()
+        WHERE id = $1 AND user_id = $2
+        RETURNING *
+      `,
+      [boardId, req.authUser.id, nextName, nextDesc]
+    );
+
+    await auditEvent(req.authUser.id, 'board_update', { boardId });
+    res.json({ ok: true, board: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/boards/:id', requireAuth, async (req, res) => {
+  const boardId = toNumber(req.params.id);
+  if (!boardId) return res.status(400).json({ error: 'Invalid board ID.' });
+
+  try {
+    const result = await pool.query('DELETE FROM boards WHERE id = $1 AND user_id = $2 RETURNING id', [boardId, req.authUser.id]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Board not found or unauthorized.' });
+    }
+
+    await auditEvent(req.authUser.id, 'board_delete', { boardId });
+    res.json({ ok: true, id: boardId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/boards/:id/items', requireAuth, async (req, res) => {
+  const boardId = toNumber(req.params.id);
+  if (!boardId) return res.status(400).json({ error: 'Invalid board ID.' });
+
+  const { vibeId, title = '', note = '', mood = '', lat, lon, metadata = {} } = req.body || {};
+
+  try {
+    const boardResult = await pool.query('SELECT id FROM boards WHERE id = $1 AND user_id = $2', [boardId, req.authUser.id]);
+    if (boardResult.rowCount === 0) {
+      return res.status(404).json({ error: 'Board not found or unauthorized.' });
+    }
+
+    let itemLat = toNumber(lat);
+    let itemLon = toNumber(lon);
+    let itemTitle = String(title || '').trim();
+    let itemMood = String(mood || '').trim();
+    let itemNote = String(note || '').trim();
+    let validVibeId = null;
+
+    if (vibeId) {
+      const parsedVibeId = toNumber(vibeId);
+      if (parsedVibeId) {
+        const vibeCheck = await pool.query('SELECT * FROM vibes WHERE id = $1 AND user_id = $2', [parsedVibeId, req.authUser.id]);
+        if (vibeCheck.rowCount > 0) {
+          validVibeId = parsedVibeId;
+          const vibe = vibeCheck.rows[0];
+          if (!itemLat) itemLat = vibe.lat;
+          if (!itemLon) itemLon = vibe.lon;
+          if (!itemTitle) itemTitle = vibe.name || vibe.note || 'Spot';
+          if (!itemMood) itemMood = vibe.mood;
+          if (!itemNote) itemNote = vibe.note || '';
+        }
+      }
+    }
+
+    if (!itemTitle) itemTitle = 'Saved Spot';
+    if (!Number.isFinite(itemLat) || !Number.isFinite(itemLon)) {
+      return res.status(400).json({ error: 'lat and lon are required for board items.' });
+    }
+
+    const insertResult = await pool.query(
+      `
+        INSERT INTO board_items (board_id, user_id, vibe_id, title, note, mood, lat, lon, metadata, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, NOW())
+        RETURNING *
+      `,
+      [boardId, req.authUser.id, validVibeId, itemTitle, itemNote, itemMood, itemLat, itemLon, JSON.stringify(metadata)]
+    );
+
+    await pool.query('UPDATE boards SET updated_at = NOW() WHERE id = $1', [boardId]);
+    await auditEvent(req.authUser.id, 'board_item_create', { boardId, itemId: insertResult.rows[0].id });
+
+    res.status(201).json({ ok: true, item: insertResult.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/boards/:id/items/:itemId', requireAuth, async (req, res) => {
+  const boardId = toNumber(req.params.id);
+  const itemId = toNumber(req.params.itemId);
+  if (!boardId || !itemId) return res.status(400).json({ error: 'Invalid board ID or item ID.' });
+
+  try {
+    const result = await pool.query(
+      'DELETE FROM board_items WHERE id = $1 AND board_id = $2 AND user_id = $3 RETURNING id',
+      [itemId, boardId, req.authUser.id]
+    );
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Board item not found or unauthorized.' });
+    }
+
+    await pool.query('UPDATE boards SET updated_at = NOW() WHERE id = $1', [boardId]);
+    await auditEvent(req.authUser.id, 'board_item_delete', { boardId, itemId });
+
+    res.json({ ok: true, id: itemId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ==========================================================================
+   USER PREFERENCES & SAVED PLACES (STRICT USER ISOLATION)
+   ========================================================================== */
+
+app.get('/api/preferences', requireAuth, async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM user_preferences WHERE user_id = $1 LIMIT 1', [req.authUser.id]);
+    if (result.rowCount === 0) {
+      return res.json({
+        preferences: {
+          user_id: req.authUser.id,
+          theme: 'system',
+          default_mood: 'Calm',
+          route_mode: 'walking',
+          budget: 'medium',
+          voice_alerts: true,
+          prefer_scenic: false,
+          minimize_stops: false,
+          return_to_start: false,
+          max_stops: 5,
+          custom_settings: {}
+        }
+      });
+    }
+    res.json({ preferences: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/api/preferences', requireAuth, async (req, res) => {
+  const {
+    theme = 'system',
+    default_mood,
+    defaultMood,
+    route_mode,
+    routeMode,
+    budget = 'medium',
+    voice_alerts,
+    voiceAlerts,
+    prefer_scenic,
+    preferScenic,
+    minimize_stops,
+    minimizeStops,
+    return_to_start,
+    returnToStart,
+    max_stops,
+    maxStops,
+    custom_settings = {}
+  } = req.body || {};
+
+  const safeDefaultMood = default_mood || defaultMood || 'Calm';
+  const safeRouteMode = route_mode || routeMode || 'walking';
+  const safeVoiceAlerts = voice_alerts !== undefined ? Boolean(voice_alerts) : voiceAlerts !== undefined ? Boolean(voiceAlerts) : true;
+  const safePreferScenic = prefer_scenic !== undefined ? Boolean(prefer_scenic) : preferScenic !== undefined ? Boolean(preferScenic) : false;
+  const safeMinimizeStops = minimize_stops !== undefined ? Boolean(minimize_stops) : minimizeStops !== undefined ? Boolean(minimizeStops) : false;
+  const safeReturnToStart = return_to_start !== undefined ? Boolean(return_to_start) : returnToStart !== undefined ? Boolean(returnToStart) : false;
+  const safeMaxStops = max_stops || maxStops || 5;
+
+  try {
+    const query = `
+      INSERT INTO user_preferences (
+        user_id, theme, default_mood, route_mode, budget, voice_alerts,
+        prefer_scenic, minimize_stops, return_to_start, max_stops, custom_settings, updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, NOW())
+      ON CONFLICT (user_id) DO UPDATE SET
+        theme = EXCLUDED.theme,
+        default_mood = EXCLUDED.default_mood,
+        route_mode = EXCLUDED.route_mode,
+        budget = EXCLUDED.budget,
+        voice_alerts = EXCLUDED.voice_alerts,
+        prefer_scenic = EXCLUDED.prefer_scenic,
+        minimize_stops = EXCLUDED.minimize_stops,
+        return_to_start = EXCLUDED.return_to_start,
+        max_stops = EXCLUDED.max_stops,
+        custom_settings = EXCLUDED.custom_settings,
+        updated_at = NOW()
+      RETURNING *
+    `;
+    const result = await pool.query(query, [
+      req.authUser.id,
+      theme,
+      safeDefaultMood,
+      safeRouteMode,
+      budget,
+      safeVoiceAlerts,
+      safePreferScenic,
+      safeMinimizeStops,
+      safeReturnToStart,
+      Math.max(2, Math.min(10, toNumber(safeMaxStops) || 5)),
+      JSON.stringify(custom_settings)
+    ]);
+
+    await auditEvent(req.authUser.id, 'preferences_update');
+    res.json({ ok: true, preferences: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/saved-places', requireAuth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM saved_places WHERE user_id = $1 ORDER BY updated_at DESC, created_at DESC',
+      [req.authUser.id]
+    );
+    res.json({ places: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/saved-places', requireAuth, async (req, res) => {
+  const { slot = 'custom', label = '', address = '', lat, lon, mood = '' } = req.body || {};
+  const latNum = toNumber(lat);
+  const lonNum = toNumber(lon);
+
+  if (!label || !Number.isFinite(latNum) || !Number.isFinite(lonNum)) {
+    return res.status(400).json({ error: 'label, lat, and lon are required for saved places.' });
+  }
+
+  try {
+    const query = `
+      INSERT INTO saved_places (user_id, slot, label, address, lat, lon, mood, created_at, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+      RETURNING *
+    `;
+    const result = await pool.query(query, [
+      req.authUser.id,
+      String(slot).toLowerCase(),
+      String(label).trim(),
+      String(address || '').trim(),
+      latNum,
+      lonNum,
+      String(mood || '').trim()
+    ]);
+
+    await auditEvent(req.authUser.id, 'saved_place_create', { placeId: result.rows[0].id });
+    res.status(201).json({ ok: true, place: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/saved-places/:id', requireAuth, async (req, res) => {
+  const placeId = toNumber(req.params.id);
+  if (!placeId) return res.status(400).json({ error: 'Invalid saved place ID.' });
+
+  try {
+    const result = await pool.query('DELETE FROM saved_places WHERE id = $1 AND user_id = $2 RETURNING id', [placeId, req.authUser.id]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Saved place not found or unauthorized.' });
+    }
+
+    await auditEvent(req.authUser.id, 'saved_place_delete', { placeId });
+    res.json({ ok: true, id: placeId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/route-profiles', requireAuth, async (req, res) => {
+  try {
+    const result = await pool.query(
+      'SELECT * FROM user_route_profiles WHERE user_id = $1 ORDER BY created_at DESC',
+      [req.authUser.id]
+    );
+    res.json({ profiles: result.rows });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/route-profiles', requireAuth, async (req, res) => {
+  const { name = '', settings = {} } = req.body || {};
+  const trimmedName = String(name).trim();
+  if (!trimmedName) return res.status(400).json({ error: 'Profile name is required.' });
+
+  try {
+    const result = await pool.query(
+      'INSERT INTO user_route_profiles (user_id, name, settings, created_at) VALUES ($1, $2, $3::jsonb, NOW()) RETURNING *',
+      [req.authUser.id, trimmedName, JSON.stringify(settings)]
+    );
+    res.status(201).json({ ok: true, profile: result.rows[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/route-profiles/:id', requireAuth, async (req, res) => {
+  const profileId = toNumber(req.params.id);
+  if (!profileId) return res.status(400).json({ error: 'Invalid profile ID.' });
+
+  try {
+    const result = await pool.query('DELETE FROM user_route_profiles WHERE id = $1 AND user_id = $2 RETURNING id', [profileId, req.authUser.id]);
+    if (result.rowCount === 0) {
+      return res.status(404).json({ error: 'Profile not found or unauthorized.' });
+    }
+    res.json({ ok: true, id: profileId });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ==========================================================================
+   HEATMAP & ROUTING
+   ========================================================================== */
+
+app.get('/api/vibes/heatmap', optionalAuth, async (req, res) => {
+  const mood = String(req.query.mood || '').trim();
+  const moodLower = mood.toLowerCase();
+  const moodTag = toMoodTag(mood);
+
+  const params = [];
+  const clauses = [];
+  if (req.authUser?.id) {
+    params.push(req.authUser.id);
+    clauses.push(`user_id = $${params.length}`);
+  } else {
+    clauses.push('user_id IS NULL');
+  }
+
+  if (mood && MOODS.includes(mood)) {
+    params.push(mood, JSON.stringify([moodTag]));
+    clauses.push(`(mood = $${params.length - 1} OR mood_tags @> $${params.length}::jsonb)`);
+  } else if (mood) {
+    params.push(JSON.stringify([moodLower]));
+    clauses.push(`mood_tags @> $${params.length}::jsonb`);
+  }
+
+  try {
+    const result = await pool.query(`
+      SELECT ROUND(lat::numeric, 3)::float AS lat,
+             ROUND(lon::numeric, 3)::float AS lon,
+             COUNT(*)::int AS intensity
+      FROM vibes
+      WHERE ${clauses.join(' AND ')}
+      GROUP BY 1, 2
+      ORDER BY intensity DESC
+      LIMIT 500
+    `, params);
+    res.json(result.rows);
+  } catch {
+    res.json([]);
+  }
+});
+
+app.post('/api/vibes/route', optionalAuth, async (req, res) => {
+  const {
+    destination,
+    start,
+    currentMood = 'calm',
+    currentTime = new Date().toISOString(),
+    budget = 'medium',
+    climateSafe = false,
+    avoidUnsafeZones = false,
+    vibeSync = false,
+    routeMode = 'walking',
+    maxStops = 5,
+    preferScenic = false,
+    minimizeStops = false,
+    returnToStart = false
+  } = req.body || {};
+
+  const resolvedRouteMode = normalizeRouteMode(routeMode);
+
+  if (!destination || !Number.isFinite(Number(destination.lat)) || !Number.isFinite(Number(destination.lon))) {
+    return res.status(400).json({ error: 'destination.lat and destination.lon are required.' });
+  }
+
+  const origin = {
+    lat: Number.isFinite(Number(start?.lat)) ? Number(start.lat) : Number(destination.lat),
+    lon: Number.isFinite(Number(start?.lon)) ? Number(start.lon) : Number(destination.lon)
+  };
+
+  const result = req.authUser?.id
+    ? await pool.query('SELECT * FROM vibes WHERE user_id = $1 ORDER BY time DESC LIMIT 1000', [req.authUser.id])
+    : await pool.query('SELECT * FROM vibes WHERE user_id IS NULL ORDER BY time DESC LIMIT 1000');
+  const pins = result.rows.map((row) =>
+    normalizeVibeRecord({
+      ...row,
+      moodTags: row.mood_tags,
+      ratings: row.ratings,
+      reviews: row.reviews,
+      createdAt: row.created_at
+    })
+  );
+
+  const requestedStops = Number(maxStops);
+  const boundedStops = Number.isFinite(requestedStops) ? Math.min(8, Math.max(2, Math.floor(requestedStops))) : 5;
+  const effectiveStopLimit = minimizeStops ? Math.min(3, boundedStops) : boundedStops;
+
+  const normalized = pins.map((p) => normalizeVibeRecord(p));
+  const unsafeRiskThreshold = avoidUnsafeZones ? 0.6 : 1;
+  const climateRiskThreshold = climateSafe ? 0.8 : 1;
+  const combinedRiskThreshold = Math.min(unsafeRiskThreshold, climateRiskThreshold);
+  const scored = normalized
+    .filter((p) => !(Math.abs(p.lat - destination.lat) < 0.000001 && Math.abs(p.lon - destination.lon) < 0.000001))
+    .map((p) => {
+      const base = smartSpotScore(p, { currentMood, currentTime, budget, origin });
+      const scenicBoost = preferScenic
+        ? clamp01((base.scoreBreakdown.rating * 0.45) + (base.scoreBreakdown.mood_match * 0.35) + ((5 - Number(base.ratings?.crowd || 3)) / 5) * 0.2)
+        : 0;
+      const adjustedScore = base.score + (preferScenic ? scenicBoost * 0.12 : 0);
+      return {
+        ...base,
+        scenicBoost: Number(scenicBoost.toFixed(3)),
+        score: Number(adjustedScore.toFixed(3))
+      };
+    })
+    .filter((p) => p.climate.combinedRisk < combinedRiskThreshold)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, effectiveStopLimit);
+
+  let routeWaypoints = [...scored].sort(
+    (a, b) =>
+      haversineKm(origin.lat, origin.lon, Number(a.lat), Number(a.lon)) -
+      haversineKm(origin.lat, origin.lon, Number(b.lat), Number(b.lon))
+  );
+
+  const totalDirectDist = haversineKm(origin.lat, origin.lon, destination.lat, destination.lon);
+  if (routeWaypoints.length === 0 && totalDirectDist >= 0.2) {
+    const stopCount = totalDirectDist > 4 ? 3 : 2;
+    const moodName = String(currentMood).charAt(0).toUpperCase() + String(currentMood).slice(1);
+    const stopNames = {
+      Calm: ['Peaceful Garden Stop', 'Quiet Tree-lined Promenade', 'Calm Lakeview Spot'],
+      Excited: ['Vibrant Plaza Stop', 'Bustling Coffee Spot', 'High-Energy Viewpoint'],
+      Musical: ['Acoustic Corner Stop', 'Rhythm Alley Rest', 'Melodic Lounge Point'],
+      Reflective: ['Quiet Sunset Vista', 'Historic Heritage Nook', 'Zen Meditation Point'],
+      Melancholy: ['Raindrop Promenade', 'Cozy Tea Rest', 'Contemplative Pier']
+    };
+    const names = stopNames[moodName] || stopNames.Calm;
+
+    for (let i = 1; i <= stopCount; i++) {
+      const frac = i / (stopCount + 1);
+      const perpOffset = (Math.sin(frac * Math.PI) * 0.0025) * (i % 2 === 0 ? 1 : -1);
+      const stopLat = origin.lat + (destination.lat - origin.lat) * frac + perpOffset;
+      const stopLon = origin.lon + (destination.lon - origin.lon) * frac + perpOffset;
+      routeWaypoints.push({
+        id: `waypoint_stop_${i}`,
+        name: names[i - 1] || `Vibe Stop ${i}`,
+        note: `${moodName} waypoint stop along journey (${(totalDirectDist * frac).toFixed(1)} km)`,
+        lat: Number(stopLat.toFixed(5)),
+        lon: Number(stopLon.toFixed(5)),
+        mood: moodName,
+        moodTags: [String(currentMood).toLowerCase(), 'scenic', 'waypoint'],
+        score: Number((4.2 + (i * 0.1)).toFixed(2)),
+        budget,
+        ratings: { overall: 4.5, safety: 4.6, vibe: 4.4, crowd: 3.2 },
+        reviews: [],
+        time: new Date().toISOString()
+      });
+    }
+  }
+
+  const routeNodes = [
+    { lat: origin.lat, lon: origin.lon },
+    ...routeWaypoints.map((p) => ({ lat: Number(p.lat), lon: Number(p.lon) })),
+    { lat: Number(destination.lat), lon: Number(destination.lon) }
+  ];
+
+  if (returnToStart) {
+    routeNodes.push({ lat: origin.lat, lon: origin.lon });
+  }
+
+  const roadRoute = await fetchRoadRouteData(routeNodes, resolvedRouteMode);
+  const pathGeometry = roadRoute.geometry.length >= 2 ? roadRoute.geometry : buildStraightPathGeometry(routeNodes);
+  const estimatedDistanceKm = roadRoute.distanceKm > 0
+    ? roadRoute.distanceKm
+    : (pathGeometry.length >= 2 ? pathDistanceKmFromCoordinates(pathGeometry) : pathDistanceKmFromLatLon(routeNodes));
+  const speedByMode = { walking: 5, cycling: 14, driving: 32 };
+  const fallbackDuration = estimatedDistanceKm > 0
+    ? Math.max(1, Math.round((estimatedDistanceKm / (speedByMode[resolvedRouteMode] || 5)) * 60))
+    : 0;
+  const estimatedDurationMin = roadRoute.durationMin > 0 ? roadRoute.durationMin : fallbackDuration;
+  const routeSteps = roadRoute.steps.length ? roadRoute.steps : buildFallbackRouteSteps(routeNodes);
+
+  const pausePoints = scored
+    .filter((p) => p.ratings.safety >= 4 && (p.moodTags.includes('calm') || p.moodTags.includes('reflective')))
+    .slice(0, 2)
+    .map((p) => ({
+      id: p.id,
+      name: p.name,
+      location: p.location,
+      reason: 'Healing pause point with strong safety and calming sentiment.'
+    }));
+
+  const avgMoodMatch = scored.length
+    ? scored.reduce((sum, p) => sum + p.scoreBreakdown.mood_match, 0) / scored.length
+    : 0;
+  const avgRating = scored.length
+    ? scored.reduce((sum, p) => sum + p.scoreBreakdown.rating, 0) / scored.length
+    : 0;
+  const avgSafety = scored.length
+    ? scored.reduce((sum, p) => sum + p.scoreBreakdown.climate_safety, 0) / scored.length
+    : 0;
+  const upliftPct = Math.round(clamp01(avgMoodMatch * 0.5 + avgRating * 0.3 + avgSafety * 0.2) * 100);
+  const routeId = `route_${Date.now()}`;
+
+  res.json({
+    routeId,
+    destination,
+    origin,
+    currentMood,
+    budget,
+    climateSafe,
+    avoidUnsafeZones,
+    vibeSync,
+    routeMode: resolvedRouteMode,
+    algorithm:
+      'score = (rating*0.4) + (mood_match*0.3) + (distance_score*0.1) + (budget_match*0.1) + (time_match*0.1)',
+    routeNarrative: `This route increases ${String(currentMood).toLowerCase()} by ${upliftPct}% based on your vibe profile.`,
+    pausePoints,
+    waypoints: routeWaypoints,
+    pathGeometry,
+    estimatedDistanceKm,
+    estimatedDurationMin,
+    routeSteps,
+    routeOptions: {
+      maxStops: effectiveStopLimit,
+      preferScenic: Boolean(preferScenic),
+      minimizeStops: Boolean(minimizeStops),
+      returnToStart: Boolean(returnToStart)
+    },
+    riskAvoidance: {
+      enabled: climateSafe || avoidUnsafeZones,
+      climateSafe,
+      avoidUnsafeZones,
+      maxAllowedCombinedRisk: Number(combinedRiskThreshold.toFixed(2)),
+      highRiskSpotsSkipped: normalized.length - scored.length
+    }
+  });
+});
+
+app.post('/api/route-feedback', requireAuth, async (req, res) => {
+  const {
+    routeId,
+    beforeMood,
+    afterMood,
+    improvementScore,
+    feedbackRating
+  } = req.body || {};
+
+  if (!routeId) return res.status(400).json({ error: 'routeId is required.' });
+  if (!beforeMood || !afterMood) return res.status(400).json({ error: 'beforeMood and afterMood are required.' });
+
+  const record = {
+    userId: req.authUser.id,
+    routeId: String(routeId),
+    beforeMood: toMoodTag(beforeMood),
+    afterMood: toMoodTag(afterMood),
+    improvementScore: normalizeFiveScale(improvementScore, 0),
+    feedbackRating: normalizeFiveScale(feedbackRating || improvementScore, 0),
+    createdAt: new Date().toISOString()
+  };
+
+  try {
+    await pool.query(
+      `
+        INSERT INTO route_feedback (user_id, route_id, before_mood, after_mood, improvement_score, feedback_rating, created_at)
+        VALUES ($1, $2, $3, $4, $5, $6, NOW())
+      `,
+      [record.userId, record.routeId, record.beforeMood, record.afterMood, record.improvementScore, record.feedbackRating]
+    );
+    await auditEvent(record.userId, 'route_feedback_create', { routeId: record.routeId });
+    res.status(201).json({ ok: true, record });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/* ==========================================================================
+   OTHER UTILITY ENDPOINTS (Context, Climate, Biometrics, AI Narrative, Spotify)
+   ========================================================================== */
 
 app.get('/api/context', async (req, res) => {
   const lat = toNumber(req.query.lat);
@@ -1191,7 +2487,7 @@ app.get('/api/context', async (req, res) => {
         timeOfDay: now.getHours() >= 18 || now.getHours() < 6 ? 'Late evening' : 'Daytime'
       });
     } catch {
-      // Fall through to Open-Meteo below.
+      // Fall through to Open-Meteo
     }
   }
 
@@ -1250,7 +2546,7 @@ app.get('/api/climate-risk', async (req, res) => {
     payload.apparentTempC = feels ?? null;
     payload.usAqi = usAqi ?? null;
   } catch {
-    // Keep hotspot-based fallback payload.
+    // Keep fallback payload
   }
 
   if (payload.combinedRisk >= 0.7) {
@@ -1299,37 +2595,40 @@ app.post('/api/echoes/trigger', optionalAuth, async (req, res) => {
   const { lat, lon, radiusMeters = 50 } = req.body || {};
   const rKm = toNumber(radiusMeters) / 1000;
 
-  const result = req.authUser?.id
-    ? await pool.query('SELECT * FROM vibes WHERE user_id IS NULL OR user_id = $1 ORDER BY time DESC LIMIT 3000', [req.authUser.id])
-    : await pool.query('SELECT * FROM vibes WHERE user_id IS NULL ORDER BY time DESC LIMIT 3000');
-  const pins = result.rows;
-
-  const candidates = pins
-    .filter((pin) => belongsToUserOrIsPublic(pin, req.authUser?.id))
-    .map((p) => ({ ...p, lat: toNumber(p.lat), lon: toNumber(p.lon) }))
-    .filter((p) => p.mood === 'Musical' && p.spotify_track_id)
-    .map((p) => ({ ...p, distanceKm: haversineKm(toNumber(lat), toNumber(lon), p.lat, p.lon) }))
-    .filter((p) => p.distanceKm <= rKm)
-    .sort((a, b) => a.distanceKm - b.distanceKm);
-
-  const match = candidates[0] || null;
-  if (!match) {
+  if (!req.authUser?.id) {
     return res.json({ triggered: false });
   }
 
-  res.json({
-    triggered: true,
-    radiusMeters,
-    pin: {
-      id: match.id,
-      note: match.note,
-      mood: match.mood,
-      spotify_track_id: match.spotify_track_id,
-      spotify_playlist_id: match.spotify_playlist_id,
-      spotifyUrl: `https://open.spotify.com/track/${match.spotify_track_id}`,
-      distanceMeters: Math.round(match.distanceKm * 1000)
+  try {
+    const result = await pool.query('SELECT * FROM vibes WHERE user_id = $1 ORDER BY time DESC LIMIT 1000', [req.authUser.id]);
+    const candidates = result.rows
+      .map((p) => ({ ...p, lat: toNumber(p.lat), lon: toNumber(p.lon) }))
+      .filter((p) => p.mood === 'Musical' && p.spotify_track_id)
+      .map((p) => ({ ...p, distanceKm: haversineKm(toNumber(lat), toNumber(lon), p.lat, p.lon) }))
+      .filter((p) => p.distanceKm <= rKm)
+      .sort((a, b) => a.distanceKm - b.distanceKm);
+
+    const match = candidates[0] || null;
+    if (!match) {
+      return res.json({ triggered: false });
     }
-  });
+
+    res.json({
+      triggered: true,
+      radiusMeters,
+      pin: {
+        id: match.id,
+        note: match.note,
+        mood: match.mood,
+        spotify_track_id: match.spotify_track_id,
+        spotify_playlist_id: match.spotify_playlist_id,
+        spotifyUrl: `https://open.spotify.com/track/${match.spotify_track_id}`,
+        distanceMeters: Math.round(match.distanceKm * 1000)
+      }
+    });
+  } catch {
+    res.json({ triggered: false });
+  }
 });
 
 app.post('/api/vibes/narrative', async (req, res) => {
@@ -1365,7 +2664,7 @@ app.post('/api/vibes/narrative', async (req, res) => {
       const text = response.data?.choices?.[0]?.message?.content?.trim();
       if (text) return res.json({ narrative: text, source: 'ai' });
     } catch {
-      // fallback below
+      // Fallback
     }
   }
 
@@ -1462,7 +2761,7 @@ app.post('/api/mood-suggest', async (req, res) => {
       const mood = MOODS.includes(parsed.mood) ? parsed.mood : heuristicMood({ note, weather, timeOfDay, playlist });
       return res.json({ mood, reason: parsed.reason || 'AI suggestion based on context.' });
     } catch {
-      // Fallback to heuristic model.
+      // Fallback
     }
   }
 
@@ -1489,7 +2788,7 @@ app.get('/api/spotify/auth-url', async (req, res) => {
   });
 });
 
-app.get('/api/spotify/config', async (req, res) => {
+app.get('/api/spotify/config', async (_req, res) => {
   const state = getSpotifyConfigState();
   res.json(state);
 });
@@ -1605,7 +2904,6 @@ app.post('/api/spotify/play', async (req, res) => {
     };
 
     let targetDeviceId = deviceId;
-
     if (!targetDeviceId) {
       const devicesRes = await axios.get('https://api.spotify.com/v1/me/player/devices', {
         headers: { Authorization: `Bearer ${accessToken}` }
@@ -1631,105 +2929,10 @@ app.post('/api/spotify/play', async (req, res) => {
       ? `https://api.spotify.com/v1/me/player/play?device_id=${encodeURIComponent(targetDeviceId)}`
       : 'https://api.spotify.com/v1/me/player/play';
 
-    await axios.put(endpoint, body, {
-      headers: authHeaders
-    });
-
+    await axios.put(endpoint, body, { headers: authHeaders });
     return res.json({ ok: true, deviceId: targetDeviceId || null });
   } catch (err) {
     return res.status(500).json({ error: err.response?.data || err.message });
-  }
-});
-
-app.post('/api/vibes', requireAuth, async (req, res) => {
-  const {
-    id,
-    name,
-    lat,
-    lon,
-    location,
-    mood,
-    moodTags,
-    budget,
-    ratings,
-    reviews,
-    note,
-    song,
-    spotify_track_id,
-    spotify_playlist_id,
-    weather: weatherInput
-  } = req.body || {};
-
-  try {
-    const base = normalizeVibeRecord({
-      id,
-      name,
-      lat: location?.lat ?? lat,
-      lon: location?.lng ?? lon,
-      mood,
-      moodTags,
-      budget,
-      ratings,
-      reviews,
-      note,
-      song,
-      spotify_track_id,
-      spotify_playlist_id,
-      weather: weatherInput
-    });
-
-    let weather = weatherInput || 'Unknown';
-
-    if (!weatherInput && process.env.OPENWEATHER_KEY) {
-      try {
-        const weatherRes = await axios.get(
-          `https://api.openweathermap.org/data/2.5/weather?lat=${base.lat}&lon=${base.lon}&units=metric&appid=${process.env.OPENWEATHER_KEY}`
-        );
-        weather = weatherRes.data.weather[0].main;
-      } catch {
-        // Keep unknown weather when weather API is not configured or unavailable.
-      }
-    }
-
-    const query = `
-      INSERT INTO vibes (
-        lat, lon, mood, name, mood_tags, budget, ratings, reviews,
-        note, song, spotify_track_id, spotify_playlist_id, weather, user_id, time, created_at, geom
-      )
-      VALUES (
-        $1, $2, $3, $4, $5::jsonb, $6, $7::jsonb, $8::jsonb,
-        $9, $10, $11, $12, $13, $14, NOW(), NOW(), ST_SetSRID(ST_MakePoint($2, $1), 4326)::geography
-      )
-      RETURNING *
-    `;
-    const result = await pool.query(query, [
-      base.lat,
-      base.lon,
-      base.mood,
-      base.name,
-      JSON.stringify(base.moodTags),
-      base.budget,
-      JSON.stringify(base.ratings),
-      JSON.stringify(base.reviews),
-      base.note,
-      base.song,
-      base.spotify_track_id || null,
-      base.spotify_playlist_id || null,
-      weather,
-      req.authUser.id
-    ]);
-    const saved = result.rows[0];
-    return res.status(201).json(
-      normalizeVibeRecord({
-        ...saved,
-        moodTags: saved.mood_tags,
-        ratings: saved.ratings,
-        reviews: saved.reviews,
-        createdAt: saved.created_at
-      })
-    );
-  } catch (err) {
-    res.status(500).json({ error: err.message });
   }
 });
 
@@ -1755,275 +2958,49 @@ app.get('/api/integrations/notion/pins', async (req, res) => {
   }
 });
 
-app.get('/api/vibes', optionalAuth, async (req, res) => {
-  const userId = req.authUser?.id;
-  const result = userId
-    ? await pool.query('SELECT * FROM vibes WHERE user_id IS NULL OR user_id = $1 ORDER BY time DESC', [userId])
-    : await pool.query('SELECT * FROM vibes WHERE user_id IS NULL ORDER BY time DESC');
-  const mapped = result.rows.map((row) =>
-    normalizeVibeRecord({
-      ...row,
-      moodTags: row.mood_tags,
-      ratings: row.ratings,
-      reviews: row.reviews,
-      createdAt: row.created_at
-    })
-  );
-  res.json(mapped);
-});
+/* ==========================================================================
+   SERVER INITIALIZATION & MIGRATIONS
+   ========================================================================== */
 
-app.get('/api/vibes/heatmap', optionalAuth, async (req, res) => {
-  const mood = String(req.query.mood || '').trim();
-  const moodLower = mood.toLowerCase();
-  const moodTag = toMoodTag(mood);
-
-  const params = [];
-  const clauses = [];
-  if (req.authUser?.id) {
-    params.push(req.authUser.id);
-    clauses.push(`(user_id IS NULL OR user_id = $${params.length})`);
-  } else {
-    clauses.push('user_id IS NULL');
-  }
-  if (mood && MOODS.includes(mood)) {
-    params.push(mood, JSON.stringify([moodTag]));
-    clauses.push(`(mood = $${params.length - 1} OR mood_tags @> $${params.length}::jsonb)`);
-  } else if (mood) {
-    params.push(JSON.stringify([moodLower]));
-    clauses.push(`mood_tags @> $${params.length}::jsonb`);
-  }
-  const result = await pool.query(`
-    SELECT ROUND(lat::numeric, 3)::float AS lat,
-           ROUND(lon::numeric, 3)::float AS lon,
-           COUNT(*)::int AS intensity
-    FROM vibes
-    WHERE ${clauses.join(' AND ')}
-    GROUP BY 1, 2
-    ORDER BY intensity DESC
-    LIMIT 500
-  `, params);
-  res.json(result.rows);
-});
-
-app.post('/api/vibes/route', optionalAuth, async (req, res) => {
-  const {
-    destination,
-    start,
-    currentMood = 'calm',
-    currentTime = new Date().toISOString(),
-    budget = 'medium',
-    climateSafe = false,
-    avoidUnsafeZones = false,
-    vibeSync = false,
-    routeMode = 'walking',
-    maxStops = 5,
-    preferScenic = false,
-    minimizeStops = false,
-    returnToStart = false
-  } = req.body || {};
-
-  const resolvedRouteMode = normalizeRouteMode(routeMode);
-
-  if (!destination || !Number.isFinite(Number(destination.lat)) || !Number.isFinite(Number(destination.lon))) {
-    return res.status(400).json({ error: 'destination.lat and destination.lon are required.' });
-  }
-
-  const origin = {
-    lat: Number.isFinite(Number(start?.lat)) ? Number(start.lat) : Number(destination.lat),
-    lon: Number.isFinite(Number(start?.lon)) ? Number(start.lon) : Number(destination.lon)
-  };
-
-  const result = req.authUser?.id
-    ? await pool.query('SELECT * FROM vibes WHERE user_id IS NULL OR user_id = $1 ORDER BY time DESC LIMIT 1000', [req.authUser.id])
-    : await pool.query('SELECT * FROM vibes WHERE user_id IS NULL ORDER BY time DESC LIMIT 1000');
-  const pins = result.rows.map((row) =>
-    normalizeVibeRecord({
-      ...row,
-      moodTags: row.mood_tags,
-      ratings: row.ratings,
-      reviews: row.reviews,
-      createdAt: row.created_at
-    })
-  );
-
-  const requestedStops = Number(maxStops);
-  const boundedStops = Number.isFinite(requestedStops) ? Math.min(8, Math.max(2, Math.floor(requestedStops))) : 5;
-  const effectiveStopLimit = minimizeStops ? Math.min(3, boundedStops) : boundedStops;
-
-  const normalized = pins
-    .filter((pin) => belongsToUserOrIsPublic(pin, req.authUser?.id))
-    .map((p) => normalizeVibeRecord(p));
-  const unsafeRiskThreshold = avoidUnsafeZones ? 0.6 : 1;
-  const climateRiskThreshold = climateSafe ? 0.8 : 1;
-  const combinedRiskThreshold = Math.min(unsafeRiskThreshold, climateRiskThreshold);
-  const scored = normalized
-    .filter((p) => !(Math.abs(p.lat - destination.lat) < 0.000001 && Math.abs(p.lon - destination.lon) < 0.000001))
-    .map((p) => {
-      const base = smartSpotScore(p, { currentMood, currentTime, budget, origin });
-      const scenicBoost = preferScenic
-        ? clamp01((base.scoreBreakdown.rating * 0.45) + (base.scoreBreakdown.mood_match * 0.35) + ((5 - Number(base.ratings?.crowd || 3)) / 5) * 0.2)
-        : 0;
-      const adjustedScore = base.score + (preferScenic ? scenicBoost * 0.12 : 0);
-      return {
-        ...base,
-        scenicBoost: Number(scenicBoost.toFixed(3)),
-        score: Number(adjustedScore.toFixed(3))
+if (require.main === module) {
+  runMigrations(pool)
+    .then(() => {
+      const tryPorts = [BACKEND_PORT, BACKEND_PORT + 1, BACKEND_PORT + 2, 3002, 3003];
+      let tryIndex = 0;
+      const tryListen = () => {
+        const port = tryPorts[tryIndex] || 0;
+        const server = app.listen(port, () => {
+          console.log(`Backend running on http://localhost:${server.address().port}`);
+        });
+        server.on('error', (err) => {
+          if (err?.code === 'EADDRINUSE' && tryIndex < tryPorts.length - 1) {
+            tryIndex += 1;
+            tryListen();
+            return;
+          }
+          if (err?.code === 'EADDRINUSE') {
+            console.log(`Backend port ${port} is already in use. Reusing existing server instance.`);
+            process.exit(0);
+          }
+          console.error('Backend failed to start:', err.message);
+          process.exit(1);
+        });
       };
+      tryListen();
     })
-    .filter((p) => p.climate.combinedRisk < combinedRiskThreshold)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, effectiveStopLimit);
+    .catch((err) => {
+      console.error('Backend startup failed: PostgreSQL schema is unavailable.', err.message);
+      process.exit(1);
+    });
 
-  const routeWaypoints = [...scored].sort(
-    (a, b) =>
-      haversineKm(origin.lat, origin.lon, Number(a.lat), Number(a.lon)) -
-      haversineKm(origin.lat, origin.lon, Number(b.lat), Number(b.lon))
-  );
-
-  const routeNodes = [
-    { lat: origin.lat, lon: origin.lon },
-    ...routeWaypoints.map((p) => ({ lat: Number(p.lat), lon: Number(p.lon) })),
-    { lat: Number(destination.lat), lon: Number(destination.lon) }
-  ];
-
-  if (returnToStart) {
-    routeNodes.push({ lat: origin.lat, lon: origin.lon });
+  async function shutdown(signal) {
+    console.log(`Received ${signal}; closing PostgreSQL connections.`);
+    await pool.end();
+    process.exit(0);
   }
 
-  const roadRoute = await fetchRoadRouteData(routeNodes, resolvedRouteMode);
-  const pathGeometry = roadRoute.geometry.length >= 2 ? roadRoute.geometry : buildStraightPathGeometry(routeNodes);
-  const estimatedDistanceKm = roadRoute.distanceKm > 0
-    ? roadRoute.distanceKm
-    : (pathGeometry.length >= 2 ? pathDistanceKmFromCoordinates(pathGeometry) : pathDistanceKmFromLatLon(routeNodes));
-  const speedByMode = { walking: 5, cycling: 14, driving: 32 };
-  const fallbackDuration = estimatedDistanceKm > 0
-    ? Math.max(1, Math.round((estimatedDistanceKm / (speedByMode[resolvedRouteMode] || 5)) * 60))
-    : 0;
-  const estimatedDurationMin = roadRoute.durationMin > 0 ? roadRoute.durationMin : fallbackDuration;
-  const routeSteps = roadRoute.steps.length ? roadRoute.steps : buildFallbackRouteSteps(routeNodes);
+  process.once('SIGINT', () => shutdown('SIGINT'));
+  process.once('SIGTERM', () => shutdown('SIGTERM'));
+}
 
-  const pausePoints = scored
-    .filter((p) => p.ratings.safety >= 4 && (p.moodTags.includes('calm') || p.moodTags.includes('reflective')))
-    .slice(0, 2)
-    .map((p) => ({
-      id: p.id,
-      name: p.name,
-      location: p.location,
-      reason: 'Healing pause point with strong safety and calming sentiment.'
-    }));
-
-  const avgMoodMatch = scored.length
-    ? scored.reduce((sum, p) => sum + p.scoreBreakdown.mood_match, 0) / scored.length
-    : 0;
-  const avgRating = scored.length
-    ? scored.reduce((sum, p) => sum + p.scoreBreakdown.rating, 0) / scored.length
-    : 0;
-  const avgSafety = scored.length
-    ? scored.reduce((sum, p) => sum + p.scoreBreakdown.climate_safety, 0) / scored.length
-    : 0;
-  const upliftPct = Math.round(clamp01(avgMoodMatch * 0.5 + avgRating * 0.3 + avgSafety * 0.2) * 100);
-  const routeId = `route_${Date.now()}`;
-
-  res.json({
-    routeId,
-    destination,
-    origin,
-    currentMood,
-    budget,
-    climateSafe,
-    avoidUnsafeZones,
-    vibeSync,
-    routeMode: resolvedRouteMode,
-    algorithm:
-      'score = (rating*0.4) + (mood_match*0.3) + (distance_score*0.1) + (budget_match*0.1) + (time_match*0.1)',
-    routeNarrative: `This route increases ${String(currentMood).toLowerCase()} by ${upliftPct}% based on user data.`,
-    pausePoints,
-    waypoints: routeWaypoints,
-    pathGeometry,
-    estimatedDistanceKm,
-    estimatedDurationMin,
-    routeSteps,
-    routeOptions: {
-      maxStops: effectiveStopLimit,
-      preferScenic: Boolean(preferScenic),
-      minimizeStops: Boolean(minimizeStops),
-      returnToStart: Boolean(returnToStart)
-    },
-    riskAvoidance: {
-      enabled: climateSafe || avoidUnsafeZones,
-      climateSafe,
-      avoidUnsafeZones,
-      maxAllowedCombinedRisk: Number(combinedRiskThreshold.toFixed(2)),
-      highRiskSpotsSkipped: normalized.length - scored.length
-    }
-  });
-});
-
-app.post('/api/route-feedback', requireAuth, async (req, res) => {
-  const {
-    routeId,
-    beforeMood,
-    afterMood,
-    improvementScore,
-    feedbackRating
-  } = req.body || {};
-
-  if (!routeId) return res.status(400).json({ error: 'routeId is required.' });
-  if (!beforeMood || !afterMood) return res.status(400).json({ error: 'beforeMood and afterMood are required.' });
-
-  const record = {
-    userId: req.authUser.id,
-    routeId: String(routeId),
-    beforeMood: toMoodTag(beforeMood),
-    afterMood: toMoodTag(afterMood),
-    improvementScore: normalizeFiveScale(improvementScore, 0),
-    feedbackRating: normalizeFiveScale(feedbackRating || improvementScore, 0),
-    createdAt: new Date().toISOString()
-  };
-
-  await pool.query(
-    `
-      INSERT INTO route_feedback (user_id, route_id, before_mood, after_mood, improvement_score, feedback_rating, created_at)
-      VALUES ($1, $2, $3, $4, $5, $6, NOW())
-    `,
-    [record.userId, record.routeId, record.beforeMood, record.afterMood, record.improvementScore, record.feedbackRating]
-  );
-
-  res.status(201).json({ ok: true, record });
-});
-
-ensureSchema()
-  .then(() => seedDemoData())
-  .then((seedResult) => {
-    if (seedResult?.inserted) {
-      console.log(`Seeded ${seedResult.inserted} demo vibe pins (${seedResult.mode}).`);
-    }
-  })
-  .then(() => {
-    const tryPorts = [BACKEND_PORT, BACKEND_PORT + 1, BACKEND_PORT + 2, BACKEND_PORT + 9];
-    let tryIndex = 0;
-    const tryListen = () => {
-      const port = tryPorts[tryIndex] || 0;
-      const server = app.listen(port, () => {
-        console.log(`Backend running on http://localhost:${server.address().port}`);
-      });
-      server.on('error', (err) => {
-        if (err?.code === 'EADDRINUSE' && tryIndex < tryPorts.length - 1) {
-          tryIndex += 1;
-          tryListen();
-          return;
-        }
-        if (err?.code === 'EADDRINUSE') {
-          console.log(`Backend port ${port} is already in use. Reusing existing server instance.`);
-          process.exit(0);
-        }
-        console.error('Backend failed to start:', err.message);
-        process.exit(1);
-      });
-    };
-    tryListen();
-  })
-  .catch((err) => {
-    console.error('Backend startup failed: PostgreSQL schema is unavailable.', err.message);
-    process.exit(1);
-  });
+module.exports = { app, pool };

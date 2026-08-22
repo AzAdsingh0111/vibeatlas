@@ -40,8 +40,12 @@ export default function Login({ onContinue, onLogin, onRegister, displayMode = '
   return (
     <div className={`login-page ${displayMode === 'modal' ? 'login-page-modal' : ''}`}>
       <div className="login-box">
-        <h1>Vibe Atlas</h1>
-        <p>Explore your perfect vibe.</p>
+        {displayMode !== 'modal' && (
+          <>
+            <h1>Vibe Atlas</h1>
+            <p>Explore your perfect vibe.</p>
+          </>
+        )}
 
         <div className="auth-toggle" role="tablist" aria-label="Authentication mode">
           <button

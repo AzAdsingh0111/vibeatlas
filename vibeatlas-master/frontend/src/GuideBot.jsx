@@ -96,6 +96,10 @@ export default function GuideBot({ context, onNavigateSection, onResetFilters })
     window.setTimeout(() => {
       const reply = buildReply(trimmed, context);
 
+      if (/(boards|board|collection|saved list)/.test(trimmed.toLowerCase()) && typeof onNavigateSection === 'function') {
+        onNavigateSection('boards');
+      }
+
       if (/(demo|seed)/.test(trimmed.toLowerCase()) && typeof onNavigateSection === 'function') {
         onNavigateSection('demo');
       }
@@ -169,6 +173,9 @@ export default function GuideBot({ context, onNavigateSection, onResetFilters })
       <div className="guide-bot-actions">
         <button type="button" className="guide-bot-action-btn" onClick={() => onNavigateSection?.('dashboard')}>
           Dashboard
+        </button>
+        <button type="button" className="guide-bot-action-btn" onClick={() => onNavigateSection?.('boards')}>
+          Boards
         </button>
         <button type="button" className="guide-bot-action-btn" onClick={() => onNavigateSection?.('demo')}>
           Demo

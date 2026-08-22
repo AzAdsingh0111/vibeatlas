@@ -1,0 +1,11 @@
+{
+  "name": "vibeatlas-launcher",
+  "private": true,
+  "scripts": {
+    "start": "npm run start --prefix vibeatlas-master",
+    "dev": "npm run start",
+    "build": "npm run build --prefix vibeatlas-master/frontend",
+    "backend": "npm run start --prefix vibeatlas-master/backend",
+    "frontend": "npm run start --prefix vibeatlas-master/frontend"
+  }
+}
